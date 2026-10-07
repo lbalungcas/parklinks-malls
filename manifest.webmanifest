@@ -4,7 +4,7 @@
   "description": "A 360 virtual tour of Ayala Malls Parklinks, with a VR mode for Meta Quest and an interactive 3D mall map.",
   "lang": "en",
   "dir": "ltr",
-  "start_url": "index.htm",
+  "start_url": "index.htm?installed=true",
   "scope": "./",
   "display": "fullscreen",
   "display_override": ["fullscreen", "standalone", "minimal-ui"],
