@@ -80,9 +80,15 @@
       var A = window.ALP;
       if (A) {
         walk(A.data, found, 0, []); walk(A.config, found, 0, []);
-        var p = A.project && A.project(), m3 = p && p.map3d;
-        // the earlier model is only a stand-in for a missing new one, so it is left out
-        if (m3 && m3.fallback && m3.url) skip = keyFor(m3.fallback);
+        // a tour holding several projects keeps each one's content apart: collect from all of them
+        var list = [A];
+        if (A.scopes) Object.keys(A.scopes).forEach(function (id) { var X = A.scopes[id]; if (X) { list.push(X); walk(X.data, found, 0, []); try { walk(X.config, found, 0, []); } catch (e) {} } });
+        list.forEach(function (X) {
+          var p = null; try { p = X.project && X.project(); } catch (e) {}
+          var m3 = p && p.map3d;
+          // the earlier model is only a stand-in for a missing new one, so it is left out
+          if (m3 && m3.fallback && m3.url) skip = keyFor(m3.fallback);
+        });
       }
     } catch (e) {}
     Object.keys(found).forEach(function (href) {
