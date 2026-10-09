@@ -1,7 +1,7 @@
 /* Offline copy of the tour.
    Adds one small button to the page. Pressing it stores every file of the tour on this device (the list comes from the
-   files.json that 3DVista writes with each export), plus what the tour loads from outside: the 3D map model and pictures on
-   GitHub and the web fonts. After that the service worker (tdvplayersw.js) answers from the stored copy, so the tour opens
+   files.json that 3DVista writes with each export), plus what the VR menus load: the pictures, film and 3D map in alp-assets,
+   anything still on GitHub, and the web fonts. After that the service worker (tdvplayersw.js) answers from the stored copy, so the tour opens
    with no connection. Nothing here touches the tour itself. */
 (function () {
   'use strict';
@@ -53,6 +53,8 @@
   /* ---------- what the tour loads from outside ---------- */
   function keyFor(href) {
     var u; try { u = new URL(href, BASE); } catch (e) { return ''; }
+    // the menu pictures, the intro film and the 3D map kept on the site itself (alp-assets)
+    if (u.origin === location.origin) return u.href.indexOf(BASE + 'alp-assets/') === 0 ? u.origin + u.pathname : '';
     if (u.hostname === 'github.com') {
       var p = u.pathname.split('/');
       if (p.length > 5 && (p[3] === 'blob' || p[3] === 'raw')) return 'https://raw.githubusercontent.com/' + p[1] + '/' + p[2] + '/' + p.slice(4).join('/');
@@ -64,7 +66,7 @@
   }
   function walk(o, out, depth, seen) {
     if (o === null || o === undefined || depth > 9) return;
-    if (typeof o === 'string') { if (/^https:\/\/(github\.com|raw\.githubusercontent\.com)\/[^\s]+\.[A-Za-z0-9]{2,5}(\?[^\s]*)?$/.test(o)) out[o] = 1; return; }
+    if (typeof o === 'string') { if (/^https:\/\/(github\.com|raw\.githubusercontent\.com)\/[^\s]+\.[A-Za-z0-9]{2,5}(\?[^\s]*)?$/.test(o) || /^alp-assets\/[^\s?]+\.[A-Za-z0-9]{2,5}$/.test(o)) out[o] = 1; return; }
     if (typeof o !== 'object' || seen.indexOf(o) >= 0) return;
     if (o.nodeType || o === window) return;
     seen.push(o);
@@ -97,7 +99,10 @@
       add(href);
       // a model manifest names the files that belong to it
       if (/\.json$/i.test(key)) jobs.push(fetch(key, { mode: 'cors', credentials: 'omit' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
-        var names = {}; (function bins(o, d) { if (!o || d > 6) return; if (typeof o === 'string') { if (/\.(bin|glb|png|jpg|webp)$/i.test(o) && o.indexOf('://') < 0) names[o] = 1; return; } if (typeof o === 'object') for (var k in o) bins(o[k], d + 1); })(j, 0);
+        var names = {};
+        // a 3D map manifest: only the table models are used (walking inside is switched off), so the finer walk models are left out
+        if (j && j.levels && j.levels.length) { j.levels.forEach(function (l) { if (l && l.table) names[l.table] = 1; }); }
+        else (function bins(o, d) { if (!o || d > 6) return; if (typeof o === 'string') { if (/\.(bin|glb|png|jpg|webp)$/i.test(o) && o.indexOf('://') < 0) names[o] = 1; return; } if (typeof o === 'object') for (var k in o) bins(o[k], d + 1); })(j, 0);
         Object.keys(names).forEach(function (n) { add(new URL(n, key).href); });
       }).catch(function () {}));
     });

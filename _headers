@@ -1,0 +1,23 @@
+# Netlify response headers for the tour. Netlify reads this file on every deploy.
+#
+# Without these, Netlify sends "max-age=0, must-revalidate", so a returning headset re-checks every panorama tile,
+# video and script with the server before it can use its cached copy.
+#
+# 3DVista adds ?v=<publish time> to almost every media and lib request, so a re-publish changes those URLs and
+# visitors fetch the new files straight away. A few files are requested without it (the panorama thumbnails the VR
+# menu uses, the controller models, cursors), which is why these are a week or a month rather than a year.
+# Pages and tour scripts (index.htm, script.js, script_general.js, locale/, files.json, tdvplayersw.js, alp-offline.js)
+# keep Netlify's default: always revalidated.
+
+/media/*
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+
+/lib/*
+  Cache-Control: public, max-age=2592000, stale-while-revalidate=86400
+
+/fonts/*
+  Cache-Control: public, max-age=2592000
+
+# Pictures, intro film and 3D map used by the VR menus (not versioned by 3DVista)
+/alp-assets/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800

@@ -1,0 +1,189 @@
+{
+ "version": 3,
+ "units": "m",
+ "title": "Parklinks Mall",
+ "bounds": [
+  12.015100479125977,
+  0.0,
+  -155.2836151123047,
+  195.743896484375,
+  55.05678939819336,
+  2.2766995429992676
+ ],
+ "extent": [
+  -36.36150360107422,
+  -12.850869178771973,
+  -196.9051971435547,
+  198.4154052734375,
+  55.05678939819336,
+  23.304899215698242
+ ],
+ "q": {
+  "scale": 0.003684191508492338,
+  "offset": [
+   81.02695083618164,
+   21.102960109710693,
+   -86.80014896392822
+  ]
+ },
+ "materials": [
+  "plain",
+  "slab",
+  "wall",
+  "facade",
+  "ledge",
+  "stone",
+  "wood",
+  "metal",
+  "concrete",
+  "asphalt",
+  "site",
+  "roof",
+  "plant",
+  "soil",
+  "rail",
+  "sign",
+  "sculpt",
+  "glass",
+  "car0",
+  "car1",
+  "car2",
+  "car3",
+  "car4",
+  "car5",
+  "car6",
+  "deck"
+ ],
+ "levels": [
+  {
+   "id": "G",
+   "name": "Ground Floor",
+   "short": "G",
+   "elev": 2.5,
+   "top": 8.5,
+   "table": "parklinks-G-table-v3.bin",
+   "tableTris": 63704,
+   "tableLines": 24427,
+   "walk": "parklinks-G-walk-v3.bin",
+   "walkTris": 212370,
+   "walkLines": 52782
+  },
+  {
+   "id": "2",
+   "name": "Second Floor",
+   "short": "2",
+   "elev": 8.5,
+   "top": 13.5,
+   "table": "parklinks-2-table-v3.bin",
+   "tableTris": 86745,
+   "tableLines": 29207,
+   "walk": "parklinks-2-walk-v3.bin",
+   "walkTris": 157276,
+   "walkLines": 36476
+  },
+  {
+   "id": "3",
+   "name": "Third Floor",
+   "short": "3",
+   "elev": 13.5,
+   "top": 18.5,
+   "table": "parklinks-3-table-v3.bin",
+   "tableTris": 85830,
+   "tableLines": 22470,
+   "walk": "parklinks-3-walk-v3.bin",
+   "walkTris": 206065,
+   "walkLines": 51277
+  },
+  {
+   "id": "4",
+   "name": "Fourth Floor",
+   "short": "4",
+   "elev": 18.5,
+   "top": 23.5,
+   "table": "parklinks-4-table-v3.bin",
+   "tableTris": 85926,
+   "tableLines": 44667,
+   "walk": "parklinks-4-walk-v3.bin",
+   "walkTris": 206380,
+   "walkLines": 55515
+  },
+  {
+   "id": "R",
+   "name": "Roof Deck",
+   "short": "R",
+   "elev": 23.5,
+   "top": 55.0,
+   "table": "parklinks-R-table-v3.bin",
+   "tableTris": 120406,
+   "tableLines": 40187,
+   "walk": "parklinks-R-walk-v3.bin",
+   "walkTris": 225077,
+   "walkLines": 76542
+  }
+ ],
+ "pins": [
+  {
+   "label": "Drop-off",
+   "x": 23.335,
+   "y": 2.5,
+   "z": -81.916,
+   "level": "G"
+  },
+  {
+   "label": "Ground Floor Entrance",
+   "x": 35.576,
+   "y": 2.5,
+   "z": -85.581,
+   "level": "G"
+  },
+  {
+   "label": "Ground Luxury Atrium",
+   "x": 78.089,
+   "y": 2.5,
+   "z": -84.775,
+   "level": "G"
+  },
+  {
+   "label": "Upper Promenade",
+   "x": 63.5,
+   "y": 8.5,
+   "z": -96.8,
+   "level": "2"
+  },
+  {
+   "label": "Unit 102",
+   "x": 66.5,
+   "y": 8.5,
+   "z": -103.6,
+   "level": "2"
+  },
+  {
+   "label": "3rd Floor View",
+   "x": 101.8,
+   "y": 13.5,
+   "z": -85.5,
+   "level": "3"
+  },
+  {
+   "label": "3rd Floor Luxury Atrium",
+   "x": 76.5,
+   "y": 13.5,
+   "z": -96.6,
+   "level": "3"
+  },
+  {
+   "label": "Unit 101",
+   "x": 66.5,
+   "y": 13.5,
+   "z": -103.6,
+   "level": "3"
+  }
+ ],
+ "walkStart": {
+  "level": "G",
+  "x": 38.576,
+  "z": -85.581,
+  "yaw": -90
+ },
+ "source": "for Lance.obj via parklinks mall.blend"
+}
