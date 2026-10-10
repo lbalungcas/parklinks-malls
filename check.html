@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offline check</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 28px; background: #0B1220; color: #EEF2F7; font: 22px/1.45 system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+  h1 { font-size: 30px; margin: 0 0 6px; }
+  p.lead { margin: 0 0 22px; color: #9FB0C6; }
+  table { border-collapse: collapse; width: 100%; max-width: 1100px; }
+  td { padding: 12px 14px; border-bottom: 1px solid #22304A; vertical-align: top; }
+  td:first-child { width: 34%; color: #C9D4E3; }
+  .ok { color: #34D399; font-weight: 700; }
+  .bad { color: #F87171; font-weight: 700; }
+  .wait { color: #FBBF24; font-weight: 700; }
+  .ua { font-size: 16px; color: #9FB0C6; word-break: break-all; }
+  button { font: inherit; padding: 12px 22px; border-radius: 999px; border: 1px solid #3D7BFF; background: #3D7BFF; color: #fff; margin-top: 22px; }
+</style>
+</head>
+<body>
+<h1>Offline check</h1>
+<p class="lead">Open this page in the headset browser, wait until nothing says "checking", then take a screenshot.</p>
+<table id="t"></table>
+<button id="again" type="button">Check again</button>
+<script>
+(function () {
+  'use strict';
+  var T = document.getElementById('t');
+  function row(name) {
+    var tr = document.createElement('tr'), a = document.createElement('td'), b = document.createElement('td');
+    a.textContent = name; b.textContent = 'checking...'; b.className = 'wait';
+    tr.appendChild(a); tr.appendChild(b); T.appendChild(tr);
+    return function (ok, text) { b.textContent = text; b.className = ok === true ? 'ok' : ok === false ? 'bad' : 'wait'; };
+  }
+  function within(p, ms) {
+    return new Promise(function (ok, no) {
+      var t = setTimeout(function () { no(new Error('NO ANSWER after ' + ms / 1000 + ' s')); }, ms);
+      p.then(function (v) { clearTimeout(t); ok(v); }, function (e) { clearTimeout(t); no(e); });
+    });
+  }
+  function msg(e) { return (e && (e.name ? e.name + ': ' : '') + (e.message || e)) || 'failed'; }
+  function mb(n) { return (n / 1048576).toFixed(0) + ' MB'; }
+  function idbReq(r) { return new Promise(function (ok, no) { r.onsuccess = function () { ok(r.result); }; r.onerror = function () { no(r.error); }; }); }
+
+  function run() {
+    T.innerHTML = '';
+    var ua = row('Browser');
+    ua(null, navigator.userAgent); T.lastChild.lastChild.className = 'ua';
+
+    var basics = row('Basics');
+    basics(window.isSecureContext && 'caches' in window && 'serviceWorker' in navigator && 'indexedDB' in window,
+      'secure page: ' + (window.isSecureContext ? 'yes' : 'NO') + ' / cache storage: ' + ('caches' in window ? 'yes' : 'NO') +
+      ' / offline helper: ' + ('serviceWorker' in navigator ? 'yes' : 'NO') + ' / database: ' + ('indexedDB' in window ? 'yes' : 'NO'));
+
+    var est = row('Free space for this site');
+    if (navigator.storage && navigator.storage.estimate) within(navigator.storage.estimate(), 8000).then(function (e) {
+      est(e.quota > 1073741824, 'allowed ' + mb(e.quota || 0) + ', used ' + mb(e.usage || 0));
+    }, function (e) { est(false, msg(e)); });
+    else est(false, 'not available');
+
+    var cache = row('Cache storage: write, read');
+    if ('caches' in window) {
+      var name = 'alp-check', key = new URL('__alp-check__', location.href).href;
+      within(caches.open(name), 8000).then(function (c) {
+        return within(c.put(key, new Response('hello', { headers: { 'Content-Type': 'text/plain' } })), 8000).then(function () { return within(c.match(key), 8000); });
+      }).then(function (r) { return r ? r.text() : ''; }).then(function (t) {
+        cache(t === 'hello', t === 'hello' ? 'works' : 'wrote but could not read back');
+        return within(caches.delete(name), 8000).catch(function () {});
+      }, function (e) { cache(false, msg(e)); });
+    } else cache(false, 'not available');
+
+    var big = row('Cache storage: 20 MB file');
+    if ('caches' in window) {
+      var bkey = new URL('__alp-check-big__', location.href).href;
+      within(caches.open('alp-check-big'), 8000).then(function (c) {
+        return within(c.put(bkey, new Response(new Blob([new Uint8Array(20 * 1048576)]))), 20000).then(function () { return within(c.match(bkey), 8000); });
+      }).then(function (r) { return r ? r.blob() : null; }).then(function (b) {
+        big(!!b && b.size === 20 * 1048576, b ? 'works (' + mb(b.size) + ')' : 'could not read back');
+        return within(caches.delete('alp-check-big'), 8000).catch(function () {});
+      }, function (e) { big(false, msg(e)); });
+    } else big(false, 'not available');
+
+    var db = row('Database (IndexedDB): write, read');
+    if ('indexedDB' in window) {
+      var open = indexedDB.open('alp-check', 1);
+      open.onupgradeneeded = function () { open.result.createObjectStore('f'); };
+      within(idbReq(open), 8000).then(function (d) {
+        var tx = d.transaction('f', 'readwrite');
+        tx.objectStore('f').put(new Blob([new Uint8Array(5 * 1048576)]), 'x');
+        return within(new Promise(function (ok, no) { tx.oncomplete = ok; tx.onerror = function () { no(tx.error); }; tx.onabort = function () { no(tx.error); }; }), 15000).then(function () {
+          return within(idbReq(d.transaction('f').objectStore('f').get('x')), 8000);
+        }).then(function (b) { d.close(); return b; });
+      }).then(function (b) {
+        db(!!b && b.size === 5 * 1048576, b ? 'works (5 MB file)' : 'wrote but could not read back');
+        try { indexedDB.deleteDatabase('alp-check'); } catch (e) {}
+      }, function (e) { db(false, msg(e)); });
+    } else db(false, 'not available');
+
+    var sw = row('Offline helper (service worker)');
+    if ('serviceWorker' in navigator) {
+      within(navigator.serviceWorker.getRegistration(new URL('./', location.href).href), 8000).then(function (r) {
+        var ctl = !!navigator.serviceWorker.controller;
+        if (!r) { sw(false, 'not installed yet: open the tour once, then check again'); return; }
+        var w = r.active || r.waiting || r.installing;
+        sw(!!r.active && ctl, 'installed: ' + (w ? w.state : 'no worker') + ' / in charge of this page: ' + (ctl ? 'yes' : 'NO') + (w ? ' / ' + w.scriptURL.split('/').pop() : ''));
+      }, function (e) { sw(false, msg(e)); });
+    } else sw(false, 'not available');
+
+    var kept = row('Offline copy on this device');
+    if ('caches' in window) within(caches.keys(), 8000).then(function (names) {
+      var copies = names.filter(function (n) { return n.indexOf('alp-offline-') === 0 && n !== 'alp-offline-meta'; });
+      kept(copies.length ? true : null, copies.length ? copies.join(', ') : 'none yet');
+    }, function (e) { kept(false, msg(e)); });
+    else kept(false, 'not available');
+  }
+  document.getElementById('again').onclick = run;
+  run();
+})();
+</script>
+</body>
+</html>
