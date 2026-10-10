@@ -13,7 +13,8 @@
 
   // what turns the model into an information map: every lot with its number, area and status, the amenities of each floor,
   // people walking the corridors, name tags, the Floor Guide and the card that opens when a lot is pressed
-  ALP.extendState({ lotId: '', mapGuide: true, lotsOn: true, lotFilter: '', amenFilter: '' });
+  // the Floor Guide starts closed so the map opens clean; the Floor Guide button on the map's bar opens it
+  ALP.extendState({ lotId: '', mapGuide: false, lotsOn: true, lotFilter: '', amenFilter: '' });
   var LIFE = MAP.life = { lots: [], people: [], amen: [] };
 
   /* ---------- lots ---------- */

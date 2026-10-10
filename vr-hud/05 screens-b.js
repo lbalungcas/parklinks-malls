@@ -16,7 +16,8 @@
     return 'lot';
   }
   function lotFor(pl) { return A.lot(S.lotOverride || (pl && pl.lot)) || null; }
-  function furnishH() { return !S.lotOverride && A.hasPair(A.current()) ? W.FURNISH_H : 0; }
+  // Furnished / Unfurnished now sits on the dock, so the cards no longer carry their own switch
+  function furnishH() { return 0; }
   function collapsedPill(ctx, ui, w, h, title) {
     var pl = A.current() || {};
     W.glass(ctx, 2, 2, w - 4, h - 4, (h - 4) / 2, { fill: C.shell, line: W.alpha(0.5) });
@@ -26,13 +27,13 @@
   }
 
   /* ---------- the place card: whatever you are standing in, explained ---------- */
+  // opened with Info on the dock, in front of you; Info again, the close button, or moving to another place puts it away
   E.panel('detail', {
-    order: 28, enterRise: 0.02, idleDim: true, pinGroup: 'info',
-    layout: { yaw: -38, y: 0.07, dist: 2.1, deg: 26, design: 29 },
-    show: function (s) { return kind() !== 'unit' && free(s) ? 1 : 0; },
+    order: 28, enterRise: 0.02, pinGroup: 'info',
+    layout: { yaw: 0, y: 0.06, dist: 2.0, deg: 28, design: 29 },
+    show: function (s) { return kind() !== 'unit' && s.infoOn && free(s) ? 1 : 0; },
     measure: function () {
       var w = W.widthFor(this, 29), k = kind(), pl = A.current() || {}, fh = furnishH();
-      if (!S.detailOpen) { this.px = [w, 124 + fh]; return; }
       if (k === 'lot') {
         var lt = lotFor(pl), body = lt ? lt.text : (pl.info || '');
         this.px = [w, N.pad * 2 + 74 + px(T.size.heading) + 30 + 2 + 30 + W.paraHeight(W.mctx(), body, w - N.pad * 2, { size: T.size.small, lh: Math.round(px(T.size.small) * 1.72) }) + fh];
@@ -46,10 +47,9 @@
       var w = this.px[0], fh = furnishH(), h = this.px[1] - fh, k = kind(), pl = A.current() || {}, i;
       if (fh) W.furnishBar(ctx, ui, 0, h + 26, w);
       var f = A.currentFloor() || {};
-      if (!S.detailOpen) { collapsedPill(ctx, ui, w, h, k === 'floor' ? (f.levelLabel + ' ' + String.fromCharCode(183) + ' ' + f.levelName) : pl.label); return; }
       W.glass(ctx, 2, 2, w - 4, h - 4, 30, { fill: C.shell, line: W.alpha(0.5), shadowBlur: 56, shadowY: 22 });
       var x = N.pad, iw = w - N.pad * 2, y = N.pad;
-      W.roundBtn(ctx, ui, 'fold', w - N.pad - 32, y + 32, 32, 'minimize');
+      W.roundBtn(ctx, ui, 'fold', w - N.pad - 32, y + 32, 32, 'close');
       if (k === 'lot') {
         var lt = lotFor(pl), body = lt ? lt.text : (pl.info || '');
         W.eyebrow(ctx, A.section(pl.section).label, x, y + 24);
@@ -83,30 +83,26 @@
     },
     onPress: function (id) {
       if (id === 'fur:on' || id === 'fur:off') { A.setFurnished(id === 'fur:on'); return; }
-      if (id === 'fold') { S.lotOverride = ''; ALP.set({ detailOpen: false }); return; }
-      if (id === 'expand') { ALP.set({ detailOpen: true }); return; }
-      if (id === 'map') { A.openMap(); return; }
-      if (id.indexOf('unit:') === 0) A.go(id.slice(5));
+      if (id === 'fold') { A.closeInfo(); return; }
+      if (id === 'map') { A.closeInfo(); A.openMap(); return; }
+      if (id.indexOf('unit:') === 0) { A.closeInfo(); A.go(id.slice(5)); }
     }
   });
 
   /* ---------- the unit card ---------- */
   E.panel('unitcard', {
     order: 28, enterRise: 0.02, pinGroup: 'info',
-    layout: { yaw: -40, y: 0.08, dist: 2.1, deg: 31, design: 35 },
-    show: function (s) { return kind() === 'unit' && free(s) ? 1 : 0; },
+    layout: { yaw: 0, y: 0.06, dist: 2.0, deg: 33, design: 35 },
+    show: function (s) { return kind() === 'unit' && s.infoOn && free(s) ? 1 : 0; },
     measure: function () {
       var w = W.widthFor(this, 35);
-      if (!S.detailOpen) { this.px = [w, 124 + W.FURNISH_H]; return; }
       var u = A.currentUnit() || { benefits: [], facts: [], blueprints: [] };
       var left = 40 + u.benefits.length * 62 + N.gap + 40 + 2 * 112;
       var right = 40 + Math.ceil(u.blueprints.length / 2) * 96;
-      this.px = [w, W.FURNISH_H + N.pad * 2 + 62 + 96 + 84 + N.gap + 2 + N.sec + Math.max(left, right) + N.gap + 2 + 24 + 88];
+      this.px = [w, N.pad * 2 + 62 + 96 + 84 + N.gap + 2 + N.sec + Math.max(left, right) + N.gap + 2 + 24 + 88];
     },
     draw: function (ctx, ui) {
-      var w = this.px[0], h = this.px[1] - W.FURNISH_H, u = A.currentUnit() || { benefits: [], facts: [], blueprints: [] }, i;
-      W.furnishBar(ctx, ui, 0, h + 26, w);
-      if (!S.detailOpen) { collapsedPill(ctx, ui, w, h, u.title + ' Details'); return; }
+      var w = this.px[0], h = this.px[1], u = A.currentUnit() || { benefits: [], facts: [], blueprints: [] }, i;
       W.glass(ctx, 2, 2, w - 4, h - 4, 30, { fill: C.shell, line: W.alpha(0.5), shadowBlur: 56, shadowY: 22 });
       var x = N.pad, iw = w - N.pad * 2, y = N.pad;
 
@@ -118,7 +114,7 @@
       K.roundRect(ctx, x + bw + 12, y, b2, 50, 25); ctx.fillStyle = W.alpha(0.06); ctx.fill();
       ctx.lineWidth = 2; ctx.strokeStyle = W.alpha(0.12); ctx.stroke();
       W.text(ctx, u.conditionLabel || '', x + bw + 12 + b2 / 2, y + 25 + px(T.size.micro) * 0.36, { size: T.size.micro, weight: 500, track: 0.1, align: 'center', color: C.text2 });
-      W.roundBtn(ctx, ui, 'fold', w - N.pad - 34, y + 25, 34, 'minimize');
+      W.roundBtn(ctx, ui, 'fold', w - N.pad - 34, y + 25, 34, 'close');
       y += 62;
 
       W.text(ctx, u.title, x, y + px(T.size.title) * 0.78, { size: T.size.title, family: T.font.brand, track: 0.02, color: C.white, maxW: iw - 80 });
@@ -189,14 +185,14 @@
     },
     onPress: function (id) {
       if (id === 'fur:on' || id === 'fur:off') { A.setFurnished(id === 'fur:on'); return; }
-      if (id === 'fold') { ALP.set({ detailOpen: false }); return; }
-      if (id === 'expand') { ALP.set({ detailOpen: true }); return; }
+      if (id === 'fold') { A.closeInfo(); return; }
       if (id === 'back') {
+        A.closeInfo();
         var pl = A.current() || {}, list = A.places(), i;
         for (i = 0; i < list.length; i++) if (!list[i].unit && list[i].floor === pl.floor) { A.go(list[i].id); return; }
         return;
       }
-      if (id === 'calc') { ALP.set({ calcOn: !S.calcOn }); return; }
+      if (id === 'calc') { ALP.set({ calcOn: true, infoOn: false }); return; }
       if (id.indexOf('b:') === 0) A.setBlueprint(id.slice(2));
     }
   });
@@ -286,7 +282,7 @@
     },
     onPress: function (id) {
       var cfg = P().calc || { sales: [] };
-      if (id === 'close') { ALP.set({ calcOn: false }); return; }
+      if (id === 'close') { ALP.set({ calcOn: false, infoOn: true }); return; }
       if (id.indexOf('t:') === 0) { S.calcTerm = parseInt(id.slice(2), 10); ALP.bus.emit('change', { calcTerm: S.calcTerm }); return; }
       if (id.indexOf('s:') === 0) { S.calcSales = cfg.sales[parseInt(id.slice(2), 10)] || 0; ALP.bus.emit('change', { calcSales: S.calcSales }); }
     }

@@ -514,7 +514,7 @@
 
     ALP.extendState({
       placeId: 'overview', furnished: true, blueprintId: '',
-      detailOpen: false, matrixMin: false, reelOn: true, veil: false,
+      detailOpen: false, infoOn: false, matrixMin: false, reelOn: true, veil: false,
       unitInfoOn: false, calcOn: false, calcTerm: 12, calcSales: 0,
       galleryOn: false, galleryIndex: -1, aboutOn: false, contactOn: false,
       videoOn: false, mapOn: false, mapWalk: false, soundOn: true

@@ -248,17 +248,15 @@
   /* ---------- platform bits ---------- */
   var HELP_ROWS = [
     ['Trigger', 'Point at a card or button and pull'],
-    ['Journey reel', 'Walks the tour in order, estate to units'],
+    ['The reel', 'A card for every place; pick one to go there'],
     ['Thumbstick left / right', 'Next or previous place'],
-    ['Furnished / Unfurnished', 'Appears where both exist; keeps your view'],
-    ['Details', 'The card on your right explains where you are'],
-    ['3D Mall Map', 'Every floor on a table; pick a floor, then point at a lot or a pin'],
-    ['Floor Guide', 'Beside the map: lots free on each floor and where the amenities are'],
-    ['Move a panel', 'Grip it, or pull the trigger on the bar under it; Reset has Restore original layout'],
-    ['Recenter', 'Click the thumbstick to bring every panel in front of you'],
-    ['Pinch the map', 'Both triggers on the model; hands apart to resize, turn to rotate'],
-    ['Hide Interface', 'Last button in the side menu; Show interface, B or Y brings it back'],
-    ['Look around', 'The interface fades back until you point at it']
+    ['Furnished / Unfurnished', 'On the bar where a place has both'],
+    ['Info', 'About this place; leasing details for units'],
+    ['3D Map', 'Every floor; Back to tour returns here'],
+    ['Gallery', 'The photos and films'],
+    ['Hide', 'The eye button; B or Y brings it back'],
+    ['Move a panel', 'Grip it; Start over can restore the layout'],
+    ['Recenter', 'Click the thumbstick to bring panels back']
   ];
   function helpStep() { return px(T.size.body) + px(T.size.small) + 44; }
   E.panel('help', {
@@ -282,11 +280,13 @@
       }
       var offH = W.offlineHeight ? W.offlineHeight(76) : 0;
       if (offH) W.offline(ctx, ui, 'offline', w / 2 - 300, h - 52 - 88 - offH, 600, 76);
-      W.pill(ctx, ui, 'guide', w / 2 - 300, h - 52 - 88, 280, 88, 'Show me around', { kind: 'plain', size: T.size.small, weight: 500, track: 0.1 });
-      W.pill(ctx, ui, 'ok', w / 2 + 20, h - 52 - 88, 280, 88, 'Got it', { kind: 'invert', size: T.size.small, weight: 600, track: 0.1 });
+      W.pill(ctx, ui, 'guide', w / 2 - 480, h - 52 - 88, 300, 88, 'Show me around', { kind: 'plain', size: T.size.small, weight: 500, track: 0.1 });
+      W.pill(ctx, ui, 'restart', w / 2 - 150, h - 52 - 88, 300, 88, 'Start over', { kind: 'plain', icon: 'reset', size: T.size.small, weight: 500, track: 0.1 });
+      W.pill(ctx, ui, 'ok', w / 2 + 180, h - 52 - 88, 300, 88, 'Got it', { kind: 'invert', size: T.size.small, weight: 600, track: 0.1 });
     },
     onPress: function (id) {
       if (id === 'offline') { if (A.offlinePress) A.offlinePress(); return; }
+      if (id === 'restart') { ALP.openOverlay('reset'); return; }
       ALP.closeOverlay(); if (id === 'guide' && A.startOnboarding) A.startOnboarding(true);
     }
   });
@@ -372,12 +372,13 @@
   /* ---------- onboarding: a short guided tour of the controls, after a project is chosen ---------- */
   var OB_STEPS = [
     { id: 'welcome', title: 'Welcome to Parklinks Mall', text: 'A one-minute guide to the controls. Point at anything and pull the trigger to press it. You can skip the guide at any time.' },
-    { id: 'reel', panel: 'reel', title: 'The journey reel', text: 'Walks the tour in order, from the estate to the units. Pick a card to go there, or push the thumbstick left or right for the next or previous place.' },
-    { id: 'detail', panel: 'detail', title: 'Where you are', text: 'This card explains the place you are in. Details opens more, and Furnished / Unfurnished appears wherever a place has both.' },
-    { id: 'menu', panel: 'matrix', match: 'm:', title: 'The side menu', text: 'Overview takes you back to the start, the 3D Mall Map shows every floor of the mall, and the Media Gallery has the photos and films.' },
-    { id: 'hide', panel: 'matrix', regions: ['m:hide'], title: 'Hide the interface', text: 'Hide Interface clears everything away for a clean view of the mall.', tryText: 'Try it: press Hide Interface.', doneText: 'That is all there is to it.',
+    { id: 'reel', panel: 'dock', regions: ['rprev', 'rnext'], title: 'The highlight reel', text: 'Every place in the tour is a card on the bar below you. Pick one to go there, or press a name above the cards to jump to that part of the tour.' },
+    { id: 'step', panel: 'dock', regions: ['prev', 'next'], title: 'Next and previous', text: 'The arrows beside the place name walk the tour in order. Pushing the thumbstick left or right does the same.' },
+    { id: 'finish', panel: 'dock', regions: ['fur:on', 'fur:off'], title: 'Furnished or Unfurnished', text: 'Wherever a place has both, these two buttons appear on the bar and swap the look without moving you.' },
+    { id: 'buttons', panel: 'dock', regions: ['map', 'gallery', 'info'], title: 'Map, Gallery and Info', text: 'The 3D Map shows every floor of the mall, the Gallery has the photos and films, and Info tells you about the place you are in.' },
+    { id: 'hide', panel: 'dock', regions: ['hide'], title: 'Hide the interface', text: 'The eye button clears everything away for a clean view of the mall.', tryText: 'Try it: press the eye button.', doneText: 'That is all there is to it.',
       hiddenTitle: 'Now bring it back', hiddenText: 'Press Show interface just below you, or the B or Y button on your controller.' },
-    { id: 'help', panel: 'matrix', regions: ['help'], title: 'Help, any time', text: 'The question mark lists every control and replays this guide. If the panels are ever out of view, click the thumbstick to bring them back.' },
+    { id: 'help', panel: 'dock', regions: ['help'], title: 'Help, any time', text: 'Help lists every control and replays this guide. If the panels are ever out of view, click the thumbstick to bring them back.' },
     { id: 'done', final: true, title: 'You are all set', text: 'Enjoy Parklinks Mall. Everything in this guide is also in Help.' }
   ];
   var OB = { started: false, pending: false, since: 0, size0: 1, hidPhase: 0, tried: false, dir: '', lastDir: 0, lastPulse: 0, wrapped: {} };

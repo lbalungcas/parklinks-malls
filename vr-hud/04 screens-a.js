@@ -327,6 +327,7 @@
     if (moved) {
       S.lotOverride = '';
       S.detailOpen = !!r.place.unit;
+      S.infoOn = false;
       S.calcOn = S.calcOn && !!r.place.unit;
       A.arrive(r.place);
     }
@@ -417,7 +418,8 @@
     window[name] = self;
   }
   function hookGlobals() {
-    wrap('revealLotPopup', function (id) { S.lotOverride = id; S.detailOpen = true; S.uiHidden = false; ALP.bus.emit('change', { lot: id }); });
+    // 3DVista calls this on every scene for its desktop popup; in the headset the place card waits for Info instead
+    wrap('revealLotPopup', function (id) { S.lastLot = id; });
     wrap('hideLotPopup', function () { if (S.lotOverride) { S.lotOverride = ''; ALP.bus.emit('change', { lot: '' }); } });
     wrap('showMallInfoPopup', function (d) { S.unitInfoData = d || null; A.openOnly('unitinfo'); });
     wrap('closeMallInfoPopup', function () { if (S.unitInfoOn) A.openOnly(null); });
@@ -785,7 +787,7 @@
     hideDomPicker();
     A.openOnly(null);
     if (S.mapOn && ALP.mall3d) ALP.mall3d.close();
-    S.veil = 0; S.onboard = null; S.detailOpen = false; S.lotOverride = '';
+    S.veil = 0; S.onboard = null; S.detailOpen = false; S.infoOn = false; S.calcOn = false; S.lotOverride = '';
     // leaving Parklinks stops the intro film downloading, as entering the tour does
     if (vid && !unloaded) { S.videoOn = false; unloaded = true; vidState = 'idle'; try { vid.pause(); vid.removeAttribute('src'); vid.load(); } catch (e) {} }
   });
@@ -935,7 +937,7 @@
     if (S.overlay === 'audio') ALP.closeOverlay();
     if (!quiet) ALP.toast(on ? 'Sound is on' : 'Sound is off. You will be asked again next time you enter VR.', on ? 1800 : 3600);
     ALP.bus.emit('sound', { on: !!on });
-    E.dirty('matrix');
+    E.dirty('dock');
   };
   A.soundPrompt = domAudioPrompt;
   function askSound(delay) {
@@ -1007,8 +1009,10 @@
     vid.preload = 'auto';
     vid.style.position = 'fixed';
     vid.style.width = '2px'; vid.style.height = '2px';
-    vid.style.opacity = '0'; vid.style.pointerEvents = 'none';
-    vid.style.left = '-10px'; vid.style.top = '-10px';
+    // inside the page and barely visible: Firefox-based browsers (Wolvic) stop decoding the picture of a video they consider
+    // hidden, while the sound plays on
+    vid.style.opacity = '0.01'; vid.style.pointerEvents = 'none'; vid.style.zIndex = '-1';
+    vid.style.left = '0px'; vid.style.bottom = '0px';
     vid.addEventListener('loadeddata', function () { if (unloaded) return; vidState = 'ready'; E.dirty('video'); });
     vid.addEventListener('canplay', function () { if (unloaded) return; vidState = 'ready'; E.dirty('video'); });
     vid.addEventListener('ended', function () { if (unloaded) return; vidState = 'ended'; A.openOnly(null); A.enterTour(); });
@@ -1041,8 +1045,10 @@
     draw: function (ctx, ui) {
       var w = 1920, h = 1160, v = S.videoOn ? video() : vid;
       ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, w, h);
-      var vh = 1080, vy = 0;
-      if (v && v.videoWidth) {
+      var vh = 1080, vy = 0, onScreen = A.filmOnScreen();
+      if (v && v.videoWidth && onScreen) {
+        // the picture itself is on the film screen just above this panel (drawn by WebGL); this panel keeps the frame and the button
+      } else if (v && v.videoWidth) {
         try { ctx.drawImage(v, 0, vy, w, vh); }
         catch (e) { vidState = 'error'; }
       } else {
@@ -1058,6 +1064,26 @@
         A.openOnly(null); A.enterTour();
       }
     }
+  });
+  // the film's picture, uploaded straight from the video element by WebGL and laid exactly over the top of the video panel.
+  // If a browser refuses that upload, the panel below falls back to drawing the film itself.
+  function filmFrame() { return S.videoOn && vid && vid.readyState >= 2 && vid.videoWidth ? vid : null; }
+  E.panel('filmscreen', {
+    order: 71, interactive: false, fadeSpeed: 3, px: [1920, 1080],
+    layout: { yaw: 0, y: 0.02 + 2 * 2.3 * Math.tan(36 * Math.PI / 180) * 40 / 1920, dist: 2.3, deg: 72 },
+    show: function (s, p) { return filmFrame() && (!p || p.mediaOk !== false) ? 1 : 0; },
+    media: filmFrame,
+    draw: function (ctx) { ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, 1920, 1080); }
+  });
+  A.filmOnScreen = function () { var p = E.get('filmscreen'); return !!(p && p.mediaOk !== false && filmFrame()); };
+  // drawing a frame now and then also tells Firefox-based browsers the picture is in use, so they keep decoding it
+  var keepAwake = { t: 0, c: null };
+  E.addFrame(function () {
+    if (!S.videoOn || !vid || vid.paused || !vid.videoWidth) return;
+    var now = Date.now();
+    if (now - keepAwake.t < 700) return;
+    keepAwake.t = now;
+    try { if (!keepAwake.c) { keepAwake.c = document.createElement('canvas'); keepAwake.c.width = keepAwake.c.height = 2; } keepAwake.c.getContext('2d').drawImage(vid, 0, 0, 2, 2); } catch (e) {}
   });
   // once the visitor is in the tour, stop the film downloading; the same (already unlocked) element fetches it again if Watch Introduction is pressed
   // (if the film screen is still fading out in the headset, wait for the fade so its last frame stays on screen)
@@ -1126,157 +1152,193 @@
     }
   });
 
-  /* ---------- the journey reel ---------- */
-  var RL = { cardW: 196, cardH: 122, gap: 16, visible: 7, arrow: 78, top: 50, pad: 22 };
-  E.panel('reel', {
-    order: 22, enterRise: 0.02, idleDim: true,
-    layout: { yaw: 0, y: -0.96, dist: 1.8, deg: 37 },
-    show: function (s) { return s.screen === 'tour' && !s.uiHidden && s.reelOn && !s.matrixMin && !s.calcOn && !s.galleryOn && !s.videoOn && !s.mapOn ? 1 : 0; },
-    measure: function () {
-      var v = Math.min(RL.visible, A.places().length);
-      this.px = [RL.arrow * 2 + v * RL.cardW + (v - 1) * RL.gap, RL.top + RL.cardH + 58 + RL.pad];
-    },
-    draw: function (ctx, ui) {
-      var w = this.px[0], h = this.px[1], list = A.places(), n = list.length, i;
-      var v = Math.min(RL.visible, n), cur = A.indexOf(S.placeId);
-      W.glass(ctx, 2, 2, w - 4, h - 4, 46, { fill: 'rgba(10,10,10,.88)', line: C.line, shadowBlur: 50, shadowY: 20 });
-      var target = U.clamp(cur - Math.floor(v / 2), 0, Math.max(0, n - v));
-      var roll = ui.anim('roll', target, 7);
-      var x0 = RL.arrow, step = RL.cardW + RL.gap, span = v * RL.cardW + (v - 1) * RL.gap;
+  /* ---------- the dock: the highlight reel and the control bar, one panel low in front of you ---------- */
+  // Built like the Park Villas bar, so a first-time visitor has one place to look: the place cards on top (with the section
+  // names to jump), and one row under them with the arrows around the place name, Furnished / Unfurnished where a place has
+  // both, the 3D Mall Map, the Gallery, Info, Help and the eye button that hides everything.
+  var DK = { pad: 22, row: 88, gap: 14, y: -0.88, dist: 1.4, deg: 56 };
+  var RL = { pad: 22, tabsH: 56, gap: 14, arrow: 58, visible: 6 };
+  var reel = { first: 0, lastPlace: null };
+  function sectionsInUse() {
+    var out = [], seen = {}, l = A.places(), i;
+    for (i = 0; i < l.length; i++) if (!seen[l[i].section]) { seen[l[i].section] = 1; out.push(A.section(l[i].section)); }
+    return out;
+  }
+  function firstOfSection(id) { var l = A.places(), i; for (i = 0; i < l.length; i++) if (l[i].section === id) return i; return 0; }
+  function clampFirst(f) { return Math.max(0, Math.min(f, Math.max(0, A.places().length - RL.visible))); }
+  function cardSize(w) {
+    var cw = Math.floor((w - RL.pad * 2 - RL.arrow * 2 - RL.gap * (RL.visible + 1)) / RL.visible);
+    return { w: cw, h: Math.round(cw * 0.6) };
+  }
+  function reelHeight(w) { return RL.pad + RL.tabsH + 10 + cardSize(w).h + 20; }
+  function dockBusy(s) { return !!(s.overlay || s.infoOn || s.calcOn || s.unitInfoOn || s.aboutOn || s.contactOn); }
+  A.openInfo = function () { S.lotOverride = ''; ALP.set({ infoOn: !S.infoOn, calcOn: false }); };
+  A.closeInfo = function () { S.lotOverride = ''; ALP.set({ infoOn: false, calcOn: false }); };
+
+  function drawReel(ctx, ui, w) {
+    var list = A.places(), n = list.length, i, c = cardSize(w), cur = A.indexOf(S.placeId);
+    // keep the place you are in on screen
+    if (S.placeId !== reel.lastPlace) {
+      reel.lastPlace = S.placeId;
+      if (cur >= 0 && (cur < reel.first || cur >= reel.first + RL.visible)) reel.first = clampFirst(cur - Math.floor(RL.visible / 2));
+    }
+    // section names: press one to jump to its first place
+    var secs = sectionsInUse(), tx = RL.pad + RL.arrow + RL.gap, ty = RL.pad, th = RL.tabsH - 12, curSec = cur >= 0 ? list[cur].section : '';
+    for (i = 0; i < secs.length; i++) {
+      var lab = String(secs[i].label || secs[i].id).toUpperCase();
+      var tw = Math.round(W.measure(ctx, lab, { size: T.size.micro, weight: 600, track: 0.18 }) + 48);
+      if (tx + tw > w - RL.pad) break;
+      var on = secs[i].id === curSec, hv = ui.lift('s:' + secs[i].id, tx, ty, tw, th);
+      K.roundRect(ctx, tx, ty, tw, th, th / 2);
+      ctx.fillStyle = on ? W.alpha(0.14) : W.alpha(0.04 + 0.1 * hv); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = on ? W.alpha(0.85) : W.alpha(0.1 + 0.3 * hv); ctx.stroke();
+      W.text(ctx, lab, tx + tw / 2, ty + th / 2 + px(T.size.micro) * 0.36, { size: T.size.micro, weight: 600, track: 0.18, align: 'center', color: on ? C.white : C.text2 });
+      tx += tw + 10;
+    }
+    // the cards
+    var y = RL.pad + RL.tabsH + 10, x0 = RL.pad + RL.arrow + RL.gap;
+    var off = ui.anim('first', reel.first, 10);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0 - 10, y - 14, w - x0 * 2 + 20, c.h + 28); ctx.clip();
+    var lo = Math.max(0, Math.floor(off) - 1), hi = Math.min(n, Math.ceil(off) + RL.visible + 1);
+    for (i = lo; i < hi; i++) {
+      var pl = list[i], x = x0 + (i - off) * (c.w + RL.gap);
+      if (x > w || x + c.w < 0) continue;
+      var act = i === cur, hov = ui.lift('p:' + pl.id, x, y, c.w, c.h), prs = ui.press('p:' + pl.id);
+      var lift = hov * 6 - prs * 3 + (act ? 2 : 0);
       ctx.save();
-      ctx.beginPath(); ctx.rect(x0 - 12, 0, span + 24, h); ctx.clip();
-      var lastSec = '';
-      for (i = 0; i < n; i++) {
-        var pl = list[i], x = x0 + (i - roll) * step, y = RL.top;
-        if (x + RL.cardW < x0 - 30 || x > x0 + span + 30) { lastSec = pl.section; continue; }
-        if (pl.section !== lastSec) {
-          W.text(ctx, A.section(pl.section).label, x + 4, 34, { size: T.size.micro, weight: 500, track: 0.22, upper: true, color: C.text3 });
-          if (lastSec) { ctx.fillStyle = W.alpha(0.12); ctx.fillRect(x - RL.gap / 2 - 1, 20, 2, RL.top + RL.cardH - 14); }
-          lastSec = pl.section;
-        }
-        var act = i === cur;
-        var hov = ui.lift('p:' + pl.id, x, y - 8, RL.cardW, RL.cardH + 16);
-        var prs = ui.press('p:' + pl.id);
-        var lift = hov * 8 - prs * 4 + (act ? 3 : 0);
-        ctx.save();
-        K.roundRect(ctx, x, y - lift, RL.cardW, RL.cardH, 26); ctx.clip();
-        ctx.fillStyle = '#111111'; ctx.fillRect(x, y - lift, RL.cardW, RL.cardH);
-        ctx.globalAlpha = act ? 1 : W.wa(0.58, 0.92, hov);
-        K.image(ctx, pl.img, x, y - lift, RL.cardW, RL.cardH, 'cover', 1 + hov * 0.05);
-        ctx.globalAlpha = 1;
-        var g = ctx.createLinearGradient(0, y - lift + RL.cardH, 0, y - lift + RL.cardH * 0.28);
-        g.addColorStop(0, 'rgba(0,0,0,.86)'); g.addColorStop(1, 'rgba(0,0,0,.14)');
-        ctx.fillStyle = g; ctx.fillRect(x, y - lift, RL.cardW, RL.cardH);
-        ctx.font = W.font(T.size.micro, 500); K.spacing(ctx, 0.08 * px(T.size.micro));
-        var lines = K.wrap(ctx, String(pl.short || pl.label).toUpperCase(), RL.cardW - 22);
-        if (lines.length > 2) { lines = lines.slice(0, 2); lines[1] = K.fit(ctx, lines[1] + ' ...', RL.cardW - 22); }
-        K.spacing(ctx, 0);
-        var lh = Math.round(px(T.size.micro) * 1.2), ly = y - lift + RL.cardH - 16 - (lines.length - 1) * lh;
-        for (var q = 0; q < lines.length; q++) W.text(ctx, lines[q], x + RL.cardW / 2, ly + q * lh, { size: T.size.micro, weight: 500, track: 0.08, align: 'center', color: act ? C.white : W.alpha(0.86) });
-        ctx.restore();
-        K.roundRect(ctx, x, y - lift, RL.cardW, RL.cardH, 26);
-        ctx.lineWidth = act ? 4 : 2;
-        ctx.strokeStyle = act ? '#FFFFFF' : W.alpha(W.wa(0.15, 0.6, hov));
-        if (act) { ctx.shadowColor = 'rgba(255,255,255,.3)'; ctx.shadowBlur = 22; }
-        ctx.stroke(); ctx.shadowBlur = 0;
-      }
+      K.roundRect(ctx, x, y - lift, c.w, c.h, 22); ctx.clip();
+      ctx.fillStyle = '#111111'; ctx.fillRect(x, y - lift, c.w, c.h);
+      ctx.globalAlpha = act ? 1 : W.wa(0.62, 0.95, hov);
+      K.image(ctx, pl.img, x, y - lift, c.w, c.h, 'cover', 1 + hov * 0.05);
+      ctx.globalAlpha = 1;
+      var g = ctx.createLinearGradient(0, y - lift + c.h, 0, y - lift + c.h * 0.3);
+      g.addColorStop(0, 'rgba(0,0,0,.88)'); g.addColorStop(1, 'rgba(0,0,0,.08)');
+      ctx.fillStyle = g; ctx.fillRect(x, y - lift, c.w, c.h);
+      ctx.font = W.font(T.size.micro, 600); K.spacing(ctx, 0.08 * px(T.size.micro));
+      var lines = K.wrap(ctx, String(pl.short || pl.label).toUpperCase(), c.w - 24);
+      if (lines.length > 2) { lines = lines.slice(0, 2); lines[1] = K.fit(ctx, lines[1] + ' ...', c.w - 24); }
+      K.spacing(ctx, 0);
+      var lh = Math.round(px(T.size.micro) * 1.2), ly = y - lift + c.h - 18 - (lines.length - 1) * lh;
+      for (var q = 0; q < lines.length; q++) W.text(ctx, lines[q], x + c.w / 2, ly + q * lh, { size: T.size.micro, weight: 600, track: 0.08, align: 'center', color: act ? C.white : W.alpha(0.9) });
       ctx.restore();
-      // arrows step along the journey
-      W.roundBtn(ctx, ui, 'prev', RL.arrow / 2 + 4, RL.top + RL.cardH / 2, 26, 'chevL', { disabled: cur <= 0 });
-      W.roundBtn(ctx, ui, 'next', w - RL.arrow / 2 - 4, RL.top + RL.cardH / 2, 26, 'chevR', { disabled: cur >= n - 1 });
-      // progress along the whole journey
-      var py = RL.top + RL.cardH + 30, pxs = x0 + 10, pw = span - 20;
-      ctx.fillStyle = W.alpha(0.1); K.roundRect(ctx, pxs, py - 2, pw, 4, 2); ctx.fill();
-      var prog = ui.anim('prog', n > 1 ? cur / (n - 1) : 0, 6);
-      ctx.fillStyle = W.alpha(0.55); K.roundRect(ctx, pxs, py - 2, Math.max(4, pw * prog), 4, 2); ctx.fill();
-      for (i = 0; i < n; i++) {
-        var tx = pxs + pw * (n > 1 ? i / (n - 1) : 0);
-        ctx.beginPath(); ctx.arc(tx, py, i === cur ? 9 : 4, 0, Math.PI * 2);
-        ctx.fillStyle = i === cur ? C.accent : (i < cur ? W.alpha(0.7) : W.alpha(0.25)); ctx.fill();
-      }
-      W.text(ctx, (cur + 1) + ' / ' + n, w - RL.arrow / 2 - 4, py + 7, { size: T.size.micro, color: C.text3, align: 'center' });
-    },
-    onPress: function (id) {
-      if (id === 'prev') { A.step(-1); return; }
-      if (id === 'next') { A.step(1); return; }
-      if (id.indexOf('p:') === 0) { var pl = A.place(id.slice(2)); if (pl) A.go(pl.id); }
-    },
-    onStickX: function (dx) { A.step(dx > 0 ? 1 : -1); }
-  });
+      K.roundRect(ctx, x, y - lift, c.w, c.h, 22);
+      ctx.lineWidth = act ? 4 : 2;
+      ctx.strokeStyle = act ? '#FFFFFF' : W.alpha(W.wa(0.14, 0.6, hov));
+      if (act) { ctx.shadowColor = 'rgba(255,255,255,.3)'; ctx.shadowBlur = 20; }
+      ctx.stroke(); ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+    // arrows page through the places
+    var ay = y + c.h / 2;
+    W.roundBtn(ctx, ui, 'rprev', RL.pad + RL.arrow / 2, ay, 26, 'chevL', { disabled: reel.first <= 0 });
+    W.roundBtn(ctx, ui, 'rnext', w - RL.pad - RL.arrow / 2, ay, 26, 'chevR', { disabled: reel.first >= n - RL.visible });
+  }
 
-  /* ---------- side matrix ---------- */
-  var MX = { btnH: 80, gap: 14 };
-  E.panel('matrix', {
-    order: 24, enterRise: 0.01, idleDim: true,
-    layout: { yaw: 38, y: 0.04, dist: 2.1, deg: 15, design: 17 },
-    show: function (s) { return s.screen === 'tour' && !s.uiHidden && !s.galleryOn && !s.videoOn && !s.mapWalk ? 1 : 0; },
+  // one row: the arrows around the place name, Furnished / Unfurnished, then 3D Map, Gallery, Info, Help and the eye
+  var dockInfo = { compact: false };
+  A.dockInfo = function () { return dockInfo; };
+  function drawBar(ctx, ui, w, top) {
+    var P0 = DK.pad, y = top + DK.pad, rh = DK.row, mid = y + rh / 2, i;
+    var pl = A.current() || {}, list = A.places(), cur = A.indexOf(S.placeId), pair = A.hasPair(pl), unit = !!pl.unit;
+    var items = [
+      { id: 'map', icon: 'map', label: '3D Map' },
+      { id: 'gallery', icon: 'image', label: 'Gallery' },
+      { id: 'info', icon: 'info', label: unit ? 'Unit Info' : 'Info', active: !!(S.infoOn || S.calcOn), accent: unit && !S.infoOn && !S.calcOn },
+      { id: 'help', icon: 'help', label: 'Help', active: S.overlay === 'help' }
+    ];
+    // the right side first, so the place name gets whatever is left
+    var total = 0, iconS = Math.round(px(T.size.micro) * 1.3);
+    for (i = 0; i < items.length; i++) { items[i].w = Math.round(W.measure(ctx, items[i].label, { size: T.size.micro, weight: 600, track: 0.14, upper: true }) + iconS + 14 + 40); total += items[i].w + DK.gap; }
+    var segH = rh - 16, fw = pair ? Math.round(Math.max(W.measure(ctx, 'Furnished', { size: T.size.micro, weight: 700, track: 0.14, upper: true }), W.measure(ctx, 'Unfurnished', { size: T.size.micro, weight: 700, track: 0.14, upper: true })) + 56) : 0;
+    var segW = pair ? fw * 2 + 16 : 0, eyeW = 76;
+    var rightW = total + (segW ? segW + DK.gap * 2 + 2 : 0) + eyeW + DK.gap + 2;
+    var leftW = 64 + DK.gap + 64 + DK.gap * 2;
+    dockInfo.compact = w - P0 * 2 - rightW - leftW < 190;
+    if (dockInfo.compact) { total = 0; for (i = 0; i < items.length; i++) { items[i].w = rh - 8; total += items[i].w + DK.gap; } rightW = total + (segW ? segW + DK.gap * 2 + 2 : 0) + eyeW + DK.gap + 2; }
+
+    // where you are, with the arrows either side
+    W.roundBtn(ctx, ui, 'prev', P0 + 32, mid, 30, 'chevL', { disabled: cur <= 0 });
+    var lx = P0 + 64 + DK.gap, lw = Math.max(160, w - P0 - rightW - lx - 64 - DK.gap * 2);
+    W.text(ctx, A.section(pl.section).label + '   ' + (cur + 1) + ' / ' + list.length, lx + 4, mid - 12, { size: T.size.micro, weight: 500, track: 0.2, upper: true, color: C.text3, maxW: lw - 8 });
+    W.text(ctx, pl.label || '', lx + 4, mid + px(T.size.body) * 0.9, { size: T.size.body, weight: 600, color: C.white, maxW: lw - 8 });
+    W.roundBtn(ctx, ui, 'next', lx + lw + DK.gap + 32, mid, 30, 'chevR', { disabled: cur >= list.length - 1 });
+
+    var bx = w - P0 - rightW;
+    if (segW) {
+      // Furnished / Unfurnished, only where the place has both
+      K.roundRect(ctx, bx, y + 8, segW, segH, segH / 2); ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = W.alpha(0.1); ctx.stroke();
+      W.chip(ctx, ui, 'fur:on', bx + 6, y + 14, fw, segH - 12, 'Furnished', { active: !!S.furnished, size: T.size.micro, upper: true, track: 0.14 });
+      W.chip(ctx, ui, 'fur:off', bx + 10 + fw, y + 14, fw, segH - 12, 'Unfurnished', { active: !S.furnished, size: T.size.micro, upper: true, track: 0.14 });
+      bx += segW + DK.gap;
+      ctx.fillStyle = W.alpha(0.12); ctx.fillRect(bx, y + 16, 2, rh - 32);
+      bx += 2 + DK.gap;
+    }
+    for (i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (dockInfo.compact) W.roundBtn(ctx, ui, it.id, bx + it.w / 2, mid, it.w / 2 - 6, it.icon, { active: it.active || it.accent });
+      else W.pill(ctx, ui, it.id, bx, y + 6, it.w, rh - 12, it.label, { kind: it.active ? 'invert' : (it.accent ? 'accent' : 'ghost'), icon: it.icon, size: T.size.micro, weight: 600, track: 0.14 });
+      bx += it.w + DK.gap;
+    }
+    ctx.fillStyle = W.alpha(0.12); ctx.fillRect(bx, y + 16, 2, rh - 32);
+    W.roundBtn(ctx, ui, 'hide', w - P0 - eyeW / 2, mid, 32, 'eyeOff');
+  }
+
+  E.panel('dock', {
+    order: 22, pinGroup: 'dock',
+    layout: { yaw: 0, y: DK.y, dist: DK.dist, deg: DK.deg },
+    show: function (s) {
+      if (s.screen !== 'tour' || s.uiHidden || s.mapOn || s.galleryOn || s.videoOn) return 0;
+      return dockBusy(s) && !s.infoOn && !s.calcOn ? 0.35 : 1;
+    },
     measure: function () {
-      var n = (P().menu || []).length;
-      this.px = [W.widthFor(this, 17), 30 + n * MX.btnH + (n - 1) * MX.gap + MX.gap + 82 + 20];
+      var w = W.widthFor(this, DK.deg), rh = reelHeight(w);
+      this.reelH = rh;
+      this.px = [w, rh + DK.pad * 2 + DK.row];
     },
     draw: function (ctx, ui) {
-      var w = this.px[0], list = P().menu || [], i;
-      var y = 30;
-      for (i = 0; i < list.length; i++) {
-        var m = list[i], a = ui.stagger(i, 0.04);
-        var on = (m.id === 'map3d' && S.mapOn);
-        var bw2 = Math.min(w, Math.round(W.measure(ctx, m.label, { size: T.size.small, weight: 400, track: 0.15, upper: true }) + 56 + (m.icon ? Math.round(px(T.size.small) * 1.3) + 14 : 0)));
-        ctx.save(); ctx.globalAlpha = a; ctx.translate((1 - a) * 22, 0);
-        W.pill(ctx, ui, 'm:' + m.id, w - bw2, y, bw2, MX.btnH, m.label, {
-          kind: on ? 'invert' : 'ghost', size: T.size.small, weight: 400, track: 0.15, disabled: m.disabled, radius: MX.btnH / 2, icon: m.icon
-        });
-        ctx.restore();
-        y += MX.btnH + MX.gap;
-      }
-      W.divider(ctx, 14, y - 2, w - 28, 0.08);
-      y += 20;
-      // only Help and Reset stay as round buttons; size and Side View are left out to keep the menu simple
-      var r = 30, st = 76, cx = w - r - 4;
-      W.roundBtn(ctx, ui, 'reset', cx, y + r, r, 'reset');
-      W.roundBtn(ctx, ui, 'help', cx - st, y + r, r, 'help');
+      var w = this.px[0], h = this.px[1], rh = this.reelH || 0;
+      W.glass(ctx, 2, 2, w - 4, h - 4, 36, { fill: 'rgba(10,10,10,.9)', line: W.alpha(0.12), shadowBlur: 50, shadowY: 20 });
+      drawReel(ctx, ui, w);
+      W.divider(ctx, DK.pad + 10, rh - 1, w - DK.pad * 2 - 20, 0.1);
+      drawBar(ctx, ui, w, rh);
     },
     onPress: function (id) {
-      if (id === 'fold') { ALP.set({ matrixMin: !S.matrixMin }); A.mirror('toggleParklinksSideNav', []); return; }
-      if (id === 'hide') { ALP.set({ uiHidden: true }); return; }
-      if (id === 'help') { ALP.openOverlay('help'); return; }
-      if (id === 'reset') { ALP.openOverlay('reset'); return; }
-      if (id === 'uiplus') { ALP.setUiScale((S.uiScale || 1) + 0.1); return; }
-      if (id === 'uiminus') { ALP.setUiScale((S.uiScale || 1) - 0.1); return; }
-      if (id === 'sides') { A.sideView(); return; }
-      if (id.indexOf('m:') !== 0) return;
-      var key = id.slice(2);
-      if (key === 'overview') A.go('overview');
-      else if (key === 'explore') A.go('entrance');
-      else if (key === 'map3d') A.openMap();
-      else if (key === 'locmap') ALP.toast('The location map is coming soon');
-      else if (key === 'gallery') A.openOnly('gallery');
-      else if (key === 'about') A.openOnly('about');
-      else if (key === 'contact') A.openOnly('contact');
-      else if (key === 'projects') A.openProjects();
-      else if (key === 'hide') { ALP.set({ uiHidden: true }); ALP.toast('Interface hidden. Press Show interface below, or B or Y, to bring it back.', 3600); }
+      if (id === 'rprev') { reel.first = clampFirst(reel.first - (RL.visible - 1)); E.dirty('dock'); return; }
+      if (id === 'rnext') { reel.first = clampFirst(reel.first + (RL.visible - 1)); E.dirty('dock'); return; }
+      if (id.indexOf('s:') === 0) { reel.first = clampFirst(firstOfSection(id.slice(2))); E.dirty('dock'); return; }
+      if (id.indexOf('p:') === 0) {
+        var pl = A.place(id.slice(2));
+        if (!pl) return;
+        if (pl.id === S.placeId) { ALP.toast('You are at ' + pl.label); return; }
+        A.go(pl.id);
+        return;
+      }
+      if (id === 'prev') A.step(-1);
+      else if (id === 'next') A.step(1);
+      else if (id === 'fur:on' || id === 'fur:off') A.setFurnished(id === 'fur:on');
+      else if (id === 'map') { A.closeInfo(); A.openMap(); }
+      else if (id === 'gallery') { A.closeInfo(); A.openOnly('gallery'); }
+      else if (id === 'info') A.openInfo();
+      else if (id === 'help') { A.closeInfo(); ALP.openOverlay('help'); }
+      else if (id === 'hide') { A.closeInfo(); ALP.set({ uiHidden: true }); ALP.toast('Interface hidden. Press Show interface below, or B or Y, to bring it back.', 3600); }
+    },
+    // the thumbstick pages the reel while you point at the cards, and steps from place to place anywhere else on the bar
+    onStickX: function (dx) {
+      var hid = this.hoverId || '';
+      if (hid.indexOf('p:') === 0 || hid.indexOf('s:') === 0 || hid === 'rprev' || hid === 'rnext') { reel.first = clampFirst(reel.first + (dx > 0 ? 1 : -1) * (RL.visible - 1)); E.dirty('dock'); return; }
+      A.step(dx > 0 ? 1 : -1);
     }
   });
+  // the side menu and Side View are gone; kept as a no-op for anything that still asks
+  A.isSideView = function () { return false; };
 
-  /* ---------- Side View: the info goes to the edges so the panorama is clear ---------- */
-  var SIDE_KEYS = ['info', 'matrix', 'reel', '__side'];
-  A.isSideView = function () { return !!(E.pins && E.pins.__side); };
-  A.sideView = function (on) {
-    if (on === undefined) on = !A.isSideView();
-    if (on) {
-      E.setPins({ info: { yaw: -68, y: 0.06, dist: 2.1, s: 1 }, matrix: { yaw: 68, y: 0.03, dist: 2.1, s: 1 },
-        reel: { yaw: 0, y: -1.16, dist: 1.7, s: 1 }, __side: { on: 1 } });
-      ALP.toast('Side View: glance left, right or down for the info. Tap again to bring it back.', 4200);
-    } else {
-      E.clearPins(SIDE_KEYS);
-      ALP.toast('Panels are back in front of you');
-    }
-    E.dirty('matrix');
-  };
   // the starting placement changed (panels now sit farther away and wider apart): positions saved on a headset
   // by an earlier version are dropped once, so every visitor starts from the new layout
   try {
     var layoutKey = 'alp-layout:' + (location.host || '') + (location.pathname || '');
-    if (window.localStorage.getItem(layoutKey) !== '2') { E.clearPins(); window.localStorage.setItem(layoutKey, '2'); }
+    if (window.localStorage.getItem(layoutKey) !== '3') { E.clearPins(); window.localStorage.setItem(layoutKey, '3'); }
   } catch (e) {}
   // back to how the interface started: positions, size and Side View
   A.resetLayout = function () {
@@ -1303,11 +1365,10 @@
     if (d && d.map === true) tipOnce('pinch', 'Tip: pull both triggers on the model and move your hands apart to resize it.', 2500);
   });
   ALP.bus.on('vr:recenter', function () { ALP.toast('Panels brought back in front of you', 1800); });
-  ALP.bus.on('vr:placed', function () { if (A.isSideView()) E.dirty('matrix'); });
 
   E.panel('reveal', {
     order: 22,
-    layout: { yaw: 0, y: -0.96, dist: 1.8, deg: 13, design: 15 },
+    layout: { yaw: 0, y: -0.88, dist: 1.4, deg: 13, design: 15 }, pinGroup: 'dock',
     show: function (s) { return s.screen === 'tour' && s.uiHidden ? 1 : 0; },
     measure: function () { this.px = [W.widthFor(this, 15), 110]; },
     draw: function (ctx, ui) {

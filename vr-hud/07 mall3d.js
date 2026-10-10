@@ -1113,34 +1113,37 @@
     return 'Pick a floor to see its lots and amenities. Pinch with both triggers to resize and rotate.';
   }
   function hot() { return !!(hov.pin || hov.floor || hov.level >= 0 || hov.extra); }
+  // the map's controls take the place of the dock, in the same spot and the same style: what you are looking at on top,
+  // the floors under it, and one row of controls with Back to tour first
+  var MB = { pad: 22, row: 88, gap: 14 };
   E.panel('mall3d', {
-    order: 26, enterRise: 0.02,
-    layout: { yaw: 0, y: -0.8, dist: 1.2, deg: 46 },
+    order: 26, enterRise: 0.02, pinGroup: 'dock',
+    layout: { yaw: 0, y: -0.95, dist: 1.4, deg: 56 },
     show: function (s) { return s.mapOn && !s.uiHidden ? 1 : 0; },
-    measure: function () { this.px = [W.widthFor(this, 46), 424]; },
+    measure: function () { this.px = [W.widthFor(this, 56), MB.pad + 150 + 66 + 22 + 2 + MB.pad + MB.row + MB.pad]; },
     draw: function (ctx, ui) {
-      var w = this.px[0], h = this.px[1], i, x, cw;
-      W.glass(ctx, 2, 2, w - 4, h - 4, 34, { fill: 'rgba(10,10,10,.9)', line: W.alpha(0.12) });
-      W.eyebrow(ctx, walk.on ? 'Walk Inside' : '3D Mall Map', 40, 46);
-      W.text(ctx, title(), 40, 46 + px(T.size.heading) + 8, { size: T.size.heading, family: T.font.brand, track: 0.12, upper: true, color: C.white, maxW: w - 200 });
-      if (MAP.ready && !walk.on) W.text(ctx, Math.round(view.targetZoom * 100) + '%', w - 40, 56, { size: T.size.micro, color: C.text3, align: 'right' });
-      W.text(ctx, hint(), 40, 150, { size: T.size.small, weight: hot() ? 500 : 300, color: hot() ? C.accentLine : C.text2, maxW: w - 80 });
-      // floors and view toggles
-      var cy = 188, ch = 72, gap = 12;
-      x = 40;
-      if (!walk.on) {
-        W.chip(ctx, ui, 'lv:all', x, cy, 170, ch, 'All', { active: mode.focus < 0, size: T.size.micro, upper: true, track: 0.1 });
-        x += 170 + gap;
-      }
-      cw = Math.max(92, Math.min(170, Math.round((w - 80 - (walk.on ? 0 : 182)) / Math.max(1, levels.length)) - gap));
+      var w = this.px[0], h = this.px[1], i, x, cw, P0 = MB.pad + 14;
+      W.glass(ctx, 2, 2, w - 4, h - 4, 36, { fill: 'rgba(10,10,10,.9)', line: W.alpha(0.12), shadowBlur: 50, shadowY: 20 });
+      // what you are looking at, and what to do next
+      var y = MB.pad + 6;
+      W.eyebrow(ctx, walk.on ? 'Walk Inside' : '3D Mall Map', P0, y + px(T.size.micro));
+      if (MAP.ready && !walk.on) W.text(ctx, Math.round(view.targetZoom * 100) + '%', w - P0, y + px(T.size.micro), { size: T.size.micro, color: C.text3, align: 'right' });
+      W.text(ctx, title(), P0, y + 24 + px(T.size.heading), { size: T.size.heading, family: T.font.brand, track: 0.12, upper: true, color: C.white, maxW: w - P0 * 2 });
+      W.text(ctx, hint(), P0, y + 24 + px(T.size.heading) + 22 + px(T.size.small), { size: T.size.small, weight: hot() ? 500 : 300, color: hot() ? C.accentLine : C.text2, maxW: w - P0 * 2 });
+      // the floors
+      var cy = MB.pad + 150, ch = 66;
+      x = P0;
+      if (!walk.on) { W.chip(ctx, ui, 'lv:all', x, cy, 220, ch, 'All Floors', { active: mode.focus < 0, size: T.size.micro, upper: true, track: 0.1 }); x += 220 + MB.gap; }
+      cw = Math.max(92, Math.min(160, Math.round((w - P0 * 2 - (walk.on ? 0 : 234)) / Math.max(1, levels.length)) - MB.gap));
       for (i = 0; i < levels.length; i++) {
         var on = walk.on ? walk.level === i : mode.focus === i;
         W.chip(ctx, ui, 'lv:' + i, x, cy, cw, ch, levels[i].short, { active: on, size: T.size.micro, upper: true, track: 0.1 });
-        x += cw + gap;
+        x += cw + MB.gap;
       }
-      // Explode and Skeleton are left out to keep the toolbar simple (their code is still here)
-      // actions
-      var by = 296, bh = 84, items;
+      var dy = cy + ch + 22;
+      W.divider(ctx, MB.pad + 10, dy, w - MB.pad * 2 - 20, 0.1);
+      // one row: Back to tour, then moving the model, then the Floor Guide
+      var by = dy + 2 + MB.pad, bh = MB.row - 12, items;
       if (walk.on) {
         items = [
           { id: 'turnl', icon: 'chevL', label: 'Turn Left' },
@@ -1157,18 +1160,22 @@
           { id: 'reset', icon: 'reset', label: 'Reset' }
         ];
       }
-      var mainW = walk.on ? 250 : 250, closeW = 170;
-      cw = Math.round((w - 80 - mainW - closeW - gap * (items.length + 1)) / items.length);
-      x = 40;
+      var backW = 330, mainW = 280;
+      W.pill(ctx, ui, 'close', P0, by, backW, bh, 'Back to tour', { kind: 'invert', icon: 'back', size: T.size.micro, weight: 600, track: 0.12 });
+      x = P0 + backW + MB.gap;
+      ctx.fillStyle = W.alpha(0.12); ctx.fillRect(x, by + 10, 2, bh - 20);
+      x += 2 + MB.gap;
+      cw = Math.round((w - P0 - x - mainW - MB.gap * 2 - 2 - MB.gap * (items.length - 1)) / items.length);
       for (i = 0; i < items.length; i++) {
-        W.pill(ctx, ui, items[i].id, x, by, cw, bh, items[i].label, { kind: 'plain', icon: items[i].icon, size: T.size.micro, weight: 500, track: 0.1, radius: 22,
+        W.pill(ctx, ui, items[i].id, x, by, cw, bh, items[i].label, { kind: 'ghost', icon: items[i].icon, size: T.size.micro, weight: 500, track: 0.1,
           disabled: (items[i].id === 'up' && walk.level >= levels.length - 1) || (items[i].id === 'down' && walk.level <= 0) || (!MAP.ready && !walk.on) });
-        x += cw + gap;
+        x += cw + MB.gap;
       }
-      if (walk.on) W.pill(ctx, ui, 'table', x, by, mainW, bh, 'Map View', { kind: 'accent', icon: 'map', size: T.size.micro, weight: 600, track: 0.12, radius: 22 });
-      else if (CFG.walk) W.pill(ctx, ui, 'walk', x, by, mainW, bh, 'Walk Inside', { kind: 'accent', icon: 'vr', size: T.size.micro, weight: 600, track: 0.12, radius: 22, disabled: !MAP.ready });
-      else W.pill(ctx, ui, 'guide', x, by, mainW, bh, 'Floor Guide', { kind: S.mapGuide ? 'accent' : 'plain', icon: 'layers', size: T.size.micro, weight: 600, track: 0.12, radius: 22, disabled: !MAP.ready });
-      W.pill(ctx, ui, 'close', w - 40 - closeW, by, closeW, bh, 'Close', { kind: 'invert', icon: 'close', size: T.size.micro, weight: 600, track: 0.12, radius: 22 });
+      ctx.fillStyle = W.alpha(0.12); ctx.fillRect(x, by + 10, 2, bh - 20);
+      x = w - P0 - mainW;
+      if (walk.on) W.pill(ctx, ui, 'table', x, by, mainW, bh, 'Map View', { kind: 'accent', icon: 'map', size: T.size.micro, weight: 600, track: 0.12 });
+      else if (CFG.walk) W.pill(ctx, ui, 'walk', x, by, mainW, bh, 'Walk Inside', { kind: 'accent', icon: 'vr', size: T.size.micro, weight: 600, track: 0.12, disabled: !MAP.ready });
+      else W.pill(ctx, ui, 'guide', x, by, mainW, bh, 'Floor Guide', { kind: S.mapGuide ? 'accent' : 'ghost', icon: 'layers', size: T.size.micro, weight: 600, track: 0.12, disabled: !MAP.ready });
     },
     onPress: function (id) {
       if (id === 'close') { MAP.close(); return; }
