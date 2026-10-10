@@ -446,9 +446,9 @@
     if (!o) return null;
     var s = o.status(), r = { state: s.state, label: 'Download for offline', sub: 'Saves the whole tour on this headset, to open without internet', icon: 'download', bar: -1 };
     if (s.state === 'working') {
-      r.label = s.total && !s.note ? 'Downloading ' + s.percent + '%' : 'Preparing download';
+      r.label = s.total ? 'Downloading ' + s.percent + '%' : 'Preparing download';
       r.sub = s.note || (offSize(s.done) + ' of ' + offSize(s.total) + '. Press to pause, or keep exploring');
-      r.icon = 'pause'; r.bar = s.note ? 0 : s.percent;
+      r.icon = 'pause'; r.bar = s.total ? s.percent : 0;
     } else if (s.state === 'paused') { r.label = 'Resume download'; r.sub = s.note || 'Carries on where it stopped'; }
     else if (s.state === 'error') { r.label = 'Try the download again'; r.sub = s.note || 'The download stopped'; r.icon = 'alert'; }
     else if (s.state === 'update') { r.label = 'Update offline copy'; r.sub = 'The tour online is newer than the copy on this headset'; }

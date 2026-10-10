@@ -13,7 +13,7 @@
     'apple-touch-icon.png', 'favicon-32.png', 'favicon.ico', 'alp-offline.js', 'files.json'];
   var PARALLEL = 6, TRIES = 3;
   var supported = 'serviceWorker' in navigator && 'caches' in window && window.isSecureContext !== false;
-  var st = { state: 'idle', meta: {}, done: 0, total: 0, note: '', confirm: false, failed: 0, extras: 0, extrasMissing: 0, missing: [] };
+  var st = { state: 'idle', meta: {}, done: 0, total: 0, note: '', confirm: false, failed: 0, extras: 0, extrasMissing: 0, missing: [], log: [], t0: 0, lastError: '' };
   var abort = null, pill = null, parts = {}, lastPaint = 0, confirmTimer = 0;
 
   function buildId() {
@@ -32,7 +32,7 @@
     st.meta = m;
     return caches.open(META_CACHE).then(function (c) {
       return c.put(META_KEY, new Response(JSON.stringify(m), { headers: { 'Content-Type': 'application/json' } }));
-    }).then(tellWorker);
+    }).then(function () { tellWorker(); });
   }
   function tellWorker() {
     try {
@@ -98,7 +98,7 @@
       if (!key || key === skip) return;
       add(href);
       // a model manifest names the files that belong to it
-      if (/\.json$/i.test(key)) jobs.push(fetch(key, { mode: 'cors', credentials: 'omit' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (/\.json$/i.test(key)) jobs.push(within(fetch(key, { mode: 'cors', credentials: 'omit' }), 15000, 'slow').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
         var names = {};
         // a 3D map manifest: only the table models are used (walking inside is switched off), so the finer walk models are left out
         if (j && j.levels && j.levels.length) { j.levels.forEach(function (l) { if (l && l.table) names[l.table] = 1; }); }
@@ -109,7 +109,7 @@
     // web fonts: the style sheet, then the font files it names
     Array.prototype.forEach.call(document.querySelectorAll('link[href*="fonts.googleapis.com"]'), function (l) {
       var href = l.href; add(href);
-      jobs.push(fetch(href, { mode: 'cors', credentials: 'omit' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (css) {
+      jobs.push(within(fetch(href, { mode: 'cors', credentials: 'omit' }), 15000, 'slow').then(function (r) { return r.ok ? r.text() : ''; }).then(function (css) {
         var re = /url\(([^)]+)\)/g, m; while ((m = re.exec(css))) add(m[1].replace(/["']/g, ''));
       }).catch(function () {}));
     });
@@ -117,24 +117,71 @@
   }
 
   /* ---------- downloading ---------- */
+  // Every step has a time limit, so a browser that never answers (seen in headset browsers) ends in a message instead of
+  // "Preparing" for ever. A file is read piece by piece: the progress moves with every piece, and a file that stops arriving
+  // for STALL ms is dropped and tried again.
+  var STALL = 30000, FIRST = 45000;
+  function within(p, ms, what) {
+    return new Promise(function (ok, no) {
+      var t = setTimeout(function () { no(new Error(what)); }, ms);
+      p.then(function (v) { clearTimeout(t); ok(v); }, function (e) { clearTimeout(t); no(e); });
+    });
+  }
+  function quiet(p, ms) { return within(p, ms, 'slow').catch(function () { return null; }); }
+  function step(note) { st.note = note; st.log.push(Math.round((Date.now() - st.t0) / 100) / 10 + 's ' + note); paint(true); }
+  function cleanHeaders(h) {
+    var out = new Headers();
+    try { h.forEach(function (v, k) { if (k !== 'content-encoding' && k !== 'content-length' && k !== 'transfer-encoding') out.set(k, v); }); } catch (e) {}
+    return out;
+  }
   function grab(item, cache) {
     var n = 0;
     function attempt() {
       if (abort.signal.aborted) return Promise.reject(new Error('stopped'));
-      var opts = { signal: abort.signal }, k;
+      var ctl = new AbortController(), timer = 0, got = 0;
+      function stopIt() { try { ctl.abort(); } catch (e) {} }
+      function arm(ms) { clearTimeout(timer); timer = setTimeout(stopIt, ms); }
+      function done() { clearTimeout(timer); abort.signal.removeEventListener('abort', stopIt); }
+      function back() { if (got && item.counted) { st.done = Math.max(0, st.done - got); } got = 0; }
+      abort.signal.addEventListener('abort', stopIt);
+      arm(FIRST);
+      var opts = { signal: ctl.signal }, k;
       for (k in (item.opts || {})) opts[k] = item.opts[k];
       return fetch(item.url, opts).then(function (res) {
-        if (res.status === 200) {
-          // a file that arrived by way of a redirect cannot be handed back for a page load as it is; store a plain copy
-          if (res.redirected) return res.blob().then(function (b) { return cache.put(item.key, new Response(b, { status: 200, headers: res.headers })); }).then(function () { return 'ok'; });
-          return cache.put(item.key, res).then(function () { return 'ok'; });
+        if (res.status !== 200) {
+          if (item.optional && (res.status === 404 || res.status === 403)) return 'skip';
+          throw new Error('status ' + res.status);
         }
-        if (item.optional && (res.status === 404 || res.status === 403)) return 'skip';
-        throw new Error('status ' + res.status);
-      }).catch(function (e) {
+        var type = res.headers.get('content-type') || '';
+        function store(blob) {
+          return within(cache.put(item.key, new Response(blob, { status: 200, statusText: 'OK', headers: cleanHeaders(res.headers) })), 60000, 'storing ' + item.key)
+            .then(function () { return 'ok'; });
+        }
+        if (!res.body || !res.body.getReader) { arm(STALL * 4); return res.blob().then(store); }
+        var reader = res.body.getReader(), parts = [];
+        arm(STALL);
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) return;
+            arm(STALL);
+            parts.push(r.value);
+            got += r.value.byteLength;
+            if (item.counted) { st.done += r.value.byteLength; paint(); }
+            return pump();
+          });
+        }
+        return pump().then(function () { clearTimeout(timer); return store(new Blob(parts, { type: type })); });
+      }).then(function (r) {
+        done();
+        // the list's size and what really came can differ a little; count the list's size
+        if (item.counted) st.done += (r === 'ok' ? (item.size || 0) - got : -got);
+        return r;
+      }, function (e) {
+        done();
+        back();
         if (abort.signal.aborted) throw e;
-        if (++n >= TRIES) return item.optional ? 'skip' : 'fail';
-        return wait(700 * n).then(attempt);
+        if (++n >= TRIES) { st.lastError = (e && e.message) || 'failed'; return item.optional ? 'skip' : 'fail'; }
+        return wait(1000 * n).then(attempt);
       });
     }
     return attempt();
@@ -145,7 +192,7 @@
       if (i >= items.length) return Promise.resolve();
       var item = items[i++];
       var job = have[item.key] ? Promise.resolve('had') : grab(item, cache);
-      return job.then(function (r) { each(item, r); return next(); });
+      return job.then(function (r) { if (r === 'ok') have[item.key] = 1; each(item, r); return next(); });
     }
     var runs = [];
     for (var k = 0; k < PARALLEL; k++) runs.push(next());
@@ -153,63 +200,83 @@
   }
   function start() {
     if (!supported || st.state === 'working') return Promise.resolve();
-    st.state = 'working'; st.note = 'Getting the list of files'; st.done = 0; st.total = 0; st.failed = 0; st.extras = 0; st.extrasMissing = 0; st.missing = []; st.confirm = false;
-    abort = new AbortController(); paint(true);
-    var build = buildId(), cacheName = PREFIX + (build || 'tour'), cache, files, index, list = [], have = {}, ext = [];
-    return registerWorker().then(function () {
-      return fetch(BASE + 'files.json' + (build ? '?v=' + build : ''), { cache: 'no-cache', signal: abort.signal });
+    st.state = 'working'; st.done = 0; st.total = 0; st.failed = 0; st.extras = 0; st.extrasMissing = 0; st.missing = []; st.confirm = false; st.log = []; st.t0 = Date.now(); st.lastError = '';
+    abort = new AbortController();
+    step('Starting the download');
+    var build = buildId(), cacheName = PREFIX + (build || 'tour'), cache, files, index, list = [], have = {}, ext = [], inList = {};
+    // the offline helper (service worker) is checked here but not waited on for long; it is made sure of again at the end
+    return quiet(registerWorker(), 6000).then(function () {
+      step('Getting the list of files');
+      return within(fetch(BASE + 'files.json' + (build ? '?v=' + build : ''), { cache: 'no-cache', signal: abort.signal }), 30000, 'The list of files (files.json) did not arrive');
     }).then(function (r) {
       if (!r.ok) throw new Error('files.json is missing from this site');
-      return r.json();
+      return within(r.json(), 30000, 'The list of files (files.json) did not arrive');
     }).then(function (f) {
       files = f;
       index = files['index.htm'] ? 'index.htm' : (files['index.html'] ? 'index.html' : (location.pathname.split('/').pop() || 'index.htm'));
+      step('Opening storage on this device');
       // an older stored copy keeps answering until the new one is whole
-      if (!(st.meta && st.meta.complete)) return writeMeta({ build: build, cache: cacheName, complete: false, index: index });
+      if (!(st.meta && st.meta.complete)) return within(writeMeta({ build: build, cache: cacheName, complete: false, index: index }), 20000, 'This browser did not open its storage');
     }).then(function () {
-      return caches.open(cacheName);
+      return within(caches.open(cacheName), 20000, 'This browser did not open its storage');
     }).then(function (c) {
       cache = c;
-      return cache.keys();
+      return within(cache.keys(), 30000, 'This browser did not open its storage');
     }).then(function (keys) {
       keys.forEach(function (k) { have[k.url] = 1; });
       var p, key, need = 0;
       for (p in files) {
         if (p.indexOf('.DS_Store') >= 0) continue;
         key = new URL(p, BASE).href;
-        list.push({ url: key + (build ? '?v=' + build : ''), key: key, size: (files[p] && files[p].size) || 0 });
+        inList[key] = 1;
+        list.push({ url: key + (build ? '?v=' + build : ''), key: key, size: (files[p] && files[p].size) || 0, counted: true });
         st.total += (files[p] && files[p].size) || 0;
-        if (!have[key]) need += (files[p] && files[p].size) || 0;
+        if (have[key]) st.done += (files[p] && files[p].size) || 0;
+        else need += (files[p] && files[p].size) || 0;
       }
       SAME.forEach(function (n) { var k2 = BASE + n; if (!files[n]) list.push({ url: k2, key: k2, size: 0, optional: true, opts: { cache: 'reload' } }); });
-      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
+      // Chrome keeps the copy without asking; Firefox-based browsers (Wolvic) would show a question, so they are not asked
+      try { if (!/Firefox|Wolvic/.test(navigator.userAgent) && navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () {}); } catch (e) {}
       if (!(navigator.storage && navigator.storage.estimate)) return null;
-      return navigator.storage.estimate().then(function (est) {
+      step('Checking free space');
+      return quiet(navigator.storage.estimate(), 5000).then(function (est) {
         if (est && est.quota && est.quota - (est.usage || 0) < need * 1.08 + 70 * 1048576) throw new Error('Not enough free storage: about ' + mb(need + 70 * 1048576) + ' is needed');
       });
     }).then(function () {
-      st.note = 'Getting the 3D map and fonts'; paint(true);
-      return outside();
+      step('');
+      return pool(list, cache, have, function (item, r) { if (r === 'fail') { st.failed++; st.missing.push(item.key); } paint(); });
+    }).then(function () {
+      step('Getting the 3D map, pictures and fonts');
+      return quiet(outside(), 30000);
     }).then(function (items) {
-      ext = items;
-      return pool(ext, cache, have, function (item, r) { if (r === 'skip' || r === 'fail') { st.extrasMissing++; st.missing.push(item.key); } else st.extras++; st.note = 'Getting the 3D map and fonts  ' + (st.extras + st.extrasMissing) + ' of ' + ext.length; paint(); });
+      // files already in the list are not fetched twice
+      ext = (items || []).filter(function (it) { return !inList[it.key]; });
+      var seen = 0;
+      return pool(ext, cache, have, function (item, r) {
+        seen++;
+        if (r === 'skip' || r === 'fail') { st.extrasMissing++; st.missing.push(item.key); } else st.extras++;
+        st.note = 'Getting the 3D map, pictures and fonts  ' + seen + ' of ' + ext.length; paint();
+      });
     }).then(function () {
-      st.note = ''; paint(true);
-      return pool(list, cache, have, function (item, r) { if (r === 'fail') st.failed++; else st.done += item.size; paint(); });
-    }).then(function () {
-      if (st.failed) { st.state = 'paused'; st.note = st.failed + ' files did not arrive. Press to try again'; paint(true); return; }
-      var old = st.meta && st.meta.complete && st.meta.cache !== cacheName ? st.meta.cache : '';
-      return writeMeta({ build: build, cache: cacheName, complete: true, index: index, bytes: st.total, files: list.length, extras: st.extras, extrasMissing: st.extrasMissing, at: Date.now() }).then(function () {
-        return caches.keys();
-      }).then(function (names) {
-        return Promise.all(names.filter(function (n) { return n.indexOf(PREFIX) === 0 && n !== cacheName && n !== META_CACHE; }).map(function (n) { return caches.delete(n); }));
+      if (st.failed) { st.state = 'paused'; step(st.failed + ' files did not arrive. Press to try again'); return; }
+      step('Starting the offline helper');
+      return quiet(registerWorker(), 10000).then(function () {
+        var old = st.meta && st.meta.complete && st.meta.cache !== cacheName ? st.meta.cache : '';
+        return within(writeMeta({ build: build, cache: cacheName, complete: true, index: index, bytes: st.total, files: list.length, extras: st.extras, extrasMissing: st.extrasMissing, at: Date.now() }), 20000, 'This browser did not save the offline note');
       }).then(function () {
-        st.state = 'ready'; st.note = st.extrasMissing ? st.extrasMissing + ' outside files could not be stored' : ''; paint(true);
-        return old;
+        return quiet(caches.keys(), 10000);
+      }).then(function (names) {
+        return Promise.all((names || []).filter(function (n) { return n.indexOf(PREFIX) === 0 && n !== cacheName && n !== META_CACHE; }).map(function (n) { return caches.delete(n); }));
+      }).then(function () {
+        st.state = 'ready'; st.done = st.total;
+        step(st.extrasMissing ? st.extrasMissing + ' outside files could not be stored' : '');
+        try { if (!navigator.serviceWorker.controller) st.note = 'Saved. Open the tour once more while online so it can open offline'; } catch (e) {}
+        paint(true);
       });
     }).catch(function (e) {
       if (abort && abort.signal.aborted) { st.state = 'paused'; st.note = 'Paused at ' + pct() + '%'; }
       else { st.state = 'error'; st.note = (e && e.message) || 'The download stopped'; }
+      st.log.push('stopped: ' + st.note);
       paint(true);
     });
   }
@@ -220,7 +287,8 @@
       return Promise.all(names.filter(function (n) { return n.indexOf(PREFIX) === 0; }).map(function (n) { return caches.delete(n); }));
     }).then(function () { st.meta = {}; st.state = 'idle'; st.note = ''; st.done = 0; st.confirm = false; return tellWorker(); }).then(function () { paint(true); });
   }
-  function pct() { return st.total ? Math.min(100, Math.floor(st.done / st.total * 100)) : 0; }
+  // a whole number that only reaches 100 when everything is stored
+  function pct() { return st.total ? Math.min(st.state === 'ready' ? 100 : 99, Math.floor(st.done / st.total * 100)) : 0; }
 
   /* ---------- the button ---------- */
   var ICON = { down: 'M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14', check: 'M5 12.5l4.5 4.5L19 7.5', pause: 'M9 6v12M15 6v12', warn: 'M12 8v5m0 3.2v.3M12 3.5l9 16.5H3z' };
@@ -264,7 +332,7 @@
     lastPaint = t;
     if (!pill) { if (!document.body) return; build(); }
     var s = st.state, label = 'Download for offline', sub = '', icon = 'down', bar = 0, online = navigator.onLine !== false;
-    if (s === 'working') { label = st.total && !st.note ? 'Downloading ' + pct() + '%' : 'Preparing download'; sub = st.note || (mb(st.done) + ' of ' + mb(st.total) + '. Keep this page open'); icon = 'pause'; bar = st.note ? 2 : Math.max(2, pct()); }
+    if (s === 'working') { label = st.total ? 'Downloading ' + pct() + '%' : 'Preparing download'; sub = st.note || (mb(st.done) + ' of ' + mb(st.total) + '. Keep this page open'); icon = 'pause'; bar = st.total ? Math.max(2, pct()) : 2; }
     else if (s === 'paused') { label = 'Resume download'; sub = st.note; }
     else if (s === 'error') { label = 'Try again'; sub = st.note; icon = 'warn'; }
     else if (s === 'update') { label = 'Update offline copy'; sub = 'The tour online is newer than the stored copy'; }
@@ -294,6 +362,6 @@
     // leave 3DVista a moment to register the worker itself, then make sure it is there
     setTimeout(registerWorker, 2500);
   }
-  window.ALPOffline = { start: start, stop: stop, remove: remove, status: function () { return { state: st.state, percent: pct(), done: st.done, total: st.total, note: st.note, failed: st.failed, extras: st.extras, extrasMissing: st.extrasMissing, missing: st.missing, meta: st.meta, supported: supported }; } };
+  window.ALPOffline = { start: start, stop: stop, remove: remove, status: function () { return { state: st.state, percent: pct(), done: st.done, total: st.total, note: st.note, failed: st.failed, extras: st.extras, extrasMissing: st.extrasMissing, missing: st.missing, meta: st.meta, supported: supported, log: st.log.slice(-30), lastError: st.lastError }; } };
   if (document.readyState === 'complete') init(); else window.addEventListener('load', init);
 })();

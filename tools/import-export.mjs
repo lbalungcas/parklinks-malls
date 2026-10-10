@@ -118,6 +118,10 @@ else {
     if (rel === 'files.json' || KEEP_OURS.has(rel) || rel.endsWith('.DS_Store') || rel.endsWith('Thumbs.db')) continue;
     list[rel] = { tags: ['mobile', 'desktop'], size: fs.statSync(path.join(ROOT, rel)).size };
   }
+  // the VR menus' pictures, film and 3D map kept on this site: in the list too, so the download counts them in its progress
+  if (fs.existsSync(path.join(ROOT, 'alp-assets')))
+    for (const rel of walk(path.join(ROOT, 'alp-assets'), ROOT))
+      if (!rel.endsWith('.DS_Store') && !rel.endsWith('Thumbs.db')) list[rel] = { tags: ['mobile', 'desktop'], size: fs.statSync(path.join(ROOT, rel)).size };
   fs.writeFileSync(path.join(ROOT, 'files.json'), JSON.stringify(list));
   const mb = Object.values(list).reduce((t, f) => t + f.size, 0) / 1048576;
   console.log(`files.json: written for ${Object.keys(list).length} files (${mb.toFixed(0)} MB), since the export did not bring one`);
