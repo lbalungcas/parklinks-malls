@@ -994,8 +994,18 @@
   /* ---------- intro video on a floating screen ---------- */
   // the film is 24 MB, so it is only downloaded while it can be watched: from the first tap before the tour, or when
   // Watch Introduction is pressed. In the tour the element is kept (it stays unlocked for playback) but holds no source.
-  var vid = null, vidState = 'idle', primed = false, unloaded = false;
-  function filmUrl() { var L = P().landing || {}; return L.video ? ALP.util.rawUrl(L.video) : ''; }
+  var vid = null, vidState = 'idle', primed = false, unloaded = false, filmTry = 0;
+  // the site's own film first, then the fallbacks in the data file (a 3DVista preview has no alp-assets folder)
+  function films() { var L = P().landing || {}; return (L.video ? [L.video] : []).concat(L.videoFallbacks || []); }
+  function filmUrl() { var l = films(); return l.length ? ALP.util.rawUrl(l[Math.min(filmTry, l.length - 1)]) : ''; }
+  function nextFilm() {
+    if (!vid || filmTry >= films().length - 1) return false;
+    filmTry++;
+    vidState = 'idle';
+    try { vid.src = filmUrl(); vid.load(); if (S.videoOn) { var pp = vid.play(); if (pp && pp.catch) pp.catch(function () {}); } } catch (e) { return false; }
+    ALP.log('intro film: trying ' + filmUrl());
+    return true;
+  }
   function video(noFilm) {
     if (vid) {
       if (unloaded && !noFilm) { unloaded = false; vidState = 'idle'; vid.src = filmUrl(); try { vid.load(); } catch (e) {} }
@@ -1016,7 +1026,7 @@
     vid.addEventListener('loadeddata', function () { if (unloaded) return; vidState = 'ready'; E.dirty('video'); });
     vid.addEventListener('canplay', function () { if (unloaded) return; vidState = 'ready'; E.dirty('video'); });
     vid.addEventListener('ended', function () { if (unloaded) return; vidState = 'ended'; A.openOnly(null); A.enterTour(); });
-    vid.addEventListener('error', function () { if (unloaded) return; vidState = 'error'; E.dirty('video'); });
+    vid.addEventListener('error', function () { if (unloaded || !vid.getAttribute('src')) return; if (nextFilm()) return; vidState = 'error'; E.dirty('video'); });
     try { document.body.appendChild(vid); } catch (e) {}
     if (noFilm) unloaded = true;
     else { vid.src = filmUrl(); try { vid.load(); } catch (e) {} }
@@ -1071,11 +1081,12 @@
   E.panel('filmscreen', {
     order: 71, interactive: false, fadeSpeed: 3, px: [1920, 1080],
     layout: { yaw: 0, y: 0.02 + 2 * 2.3 * Math.tan(36 * Math.PI / 180) * 40 / 1920, dist: 2.3, deg: 72 },
-    show: function (s, p) { return filmFrame() && (!p || p.mediaOk !== false) ? 1 : 0; },
+    show: function (s, p) { return filmFrame() && E.mediaPanels && (!p || p.mediaOk !== false) ? 1 : 0; },
     media: filmFrame,
     draw: function (ctx) { ctx.fillStyle = '#050505'; ctx.fillRect(0, 0, 1920, 1080); }
   });
-  A.filmOnScreen = function () { var p = E.get('filmscreen'); return !!(p && p.mediaOk !== false && filmFrame()); };
+  // only once the engine has really put a frame on the film screen; until then (or with an older engine) this panel draws the film
+  A.filmOnScreen = function () { var p = E.get('filmscreen'); return !!(E.mediaPanels && p && p.mediaOk === true && filmFrame()); };
   // drawing a frame now and then also tells Firefox-based browsers the picture is in use, so they keep decoding it
   var keepAwake = { t: 0, c: null };
   E.addFrame(function () {
@@ -1210,7 +1221,13 @@
       K.roundRect(ctx, x, y - lift, c.w, c.h, 22); ctx.clip();
       ctx.fillStyle = '#111111'; ctx.fillRect(x, y - lift, c.w, c.h);
       ctx.globalAlpha = act ? 1 : W.wa(0.62, 0.95, hov);
-      K.image(ctx, pl.img, x, y - lift, c.w, c.h, 'cover', 1 + hov * 0.05);
+      var pim = ALP.img(pl.img);
+      if (pim && pim.state === 'error') {
+        // no picture anywhere: a quiet card with the place name, rather than a broken-image sign
+        var pg = ctx.createLinearGradient(x, y - lift, x + c.w, y - lift + c.h);
+        pg.addColorStop(0, '#2A2723'); pg.addColorStop(1, '#121110');
+        ctx.fillStyle = pg; ctx.fillRect(x, y - lift, c.w, c.h);
+      } else K.image(ctx, pl.img, x, y - lift, c.w, c.h, 'cover', 1 + hov * 0.05);
       ctx.globalAlpha = 1;
       var g = ctx.createLinearGradient(0, y - lift + c.h, 0, y - lift + c.h * 0.3);
       g.addColorStop(0, 'rgba(0,0,0,.88)'); g.addColorStop(1, 'rgba(0,0,0,.08)');

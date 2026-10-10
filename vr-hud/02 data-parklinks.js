@@ -16,6 +16,19 @@
 
     ALP.config.projectId = 'parklinks';
 
+    // where every picture also lives on GitHub. The site's own copy (alp-assets) is tried first; when it is not there
+    // (a 3DVista preview, a plain export opened elsewhere) the original on GitHub is loaded instead, so nothing shows empty
+    var GH = 'https://raw.githubusercontent.com/virtual-sudo/virtual-studios-mall/main/';
+    var IGH = 'https://raw.githubusercontent.com/virtual-sudo/parklinks-mall-introduction/main/';
+    var FB = ALP.imgFallback || (ALP.imgFallback = {});
+    ['parklinks-overview', 'parklinks-bridge', 'central-park', 'central-park-overview', 'mall-drop-off', 'mall-entrance', 'mall-atrium',
+      'second-floor', 'third-floor'].forEach(function (n) { FB[img(n)] = GH + n + '.png'; });
+    FB[HERO] = IGH + 'parklinks-ground-hero-photoreal.png';
+    FB[A + 'landing.jpg'] = GH + 'viber_image_2026-08-13_13-10-29-577.jpg';
+    FB[BIG] = GH + '9e34753df71c055bc605c9330353ea8fa2eb62fa-7680x4320.avif';
+    FB[A + 'ayala-land-logo.svg'] = 'https://raw.githubusercontent.com/virtual-sudo/virtual-studios-mall/bab52d4f238282cc5340a1e43ab968a52824c6b4/ayala-land-logo.svg';
+    FB[A + 'eton-logo.webp'] = GH + 'eton-logo.webp';
+
     // Parklinks palette: near black glass, cream ink, mint accent
     U.extend(ALP.tokens.color, {
       bg: '#0A0A0A',
@@ -74,6 +87,9 @@
         watch: 'WATCH INTRODUCTION',
         skip: 'SKIP DIRECTLY TO TOUR',
         video: A + 'intro.mp4',
+        // tried in turn when the film above cannot be played: a copy of the new film on GitHub (upload intro.mp4 to the
+        // parklinks-mall-introduction repository to use it), then the earlier film
+        videoFallbacks: [IGH + 'intro.mp4', 'https://raw.githubusercontent.com/Raybilon/Newvideo/refs/heads/main/Parklinks%20Mall%20Draft%202%20new.mp4'],
         logos: [
           A + 'ayala-land-logo.svg',
           A + 'eton-logo.webp'

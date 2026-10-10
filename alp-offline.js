@@ -16,6 +16,19 @@
   var st = { state: 'idle', meta: {}, done: 0, total: 0, note: '', confirm: false, failed: 0, extras: 0, extrasMissing: 0, missing: [], log: [], t0: 0, lastError: '' };
   var abort = null, pill = null, parts = {}, lastPaint = 0, confirmTimer = 0;
 
+  /* ---------- a clean start: the address with #alp-reset (or ?alp-reset) removes the stored copy and the offline helper ---------- */
+  // for a device whose saved copy got into a bad state; the tour then opens fresh from the site
+  function resetAll() {
+    var jobs = [];
+    try { jobs.push(caches.keys().then(function (names) { return Promise.all(names.filter(function (n) { return n.indexOf(PREFIX) === 0 || n === META_CACHE; }).map(function (n) { return caches.delete(n); })); })); } catch (e) {}
+    try { jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+    return Promise.all(jobs.map(function (j) { return j.catch(function () {}); }));
+  }
+  if (supported && (location.hash.indexOf('alp-reset') >= 0 || location.search.indexOf('alp-reset') >= 0)) {
+    resetAll().then(function () { location.replace(location.pathname); });
+    return;
+  }
+
   function buildId() {
     var s = document.querySelector('script[src*="script.js?v="]'), m = s && /[?&]v=([^&]+)/.exec(s.getAttribute('src'));
     return m ? m[1] : '';
@@ -127,6 +140,13 @@
       p.then(function (v) { clearTimeout(t); ok(v); }, function (e) { clearTimeout(t); no(e); });
     });
   }
+  function patient(p, what) {
+    var t0 = Date.now(), tick = setInterval(function () {
+      var sec = Math.round((Date.now() - t0) / 1000);
+      if (sec >= 10) { st.note = 'Waiting for this browser to open its storage  ' + sec + ' s (the first time can take a few minutes)'; paint(true); }
+    }, 5000);
+    return within(p, 240000, what).then(function (v) { clearInterval(tick); return v; }, function (e) { clearInterval(tick); throw e; });
+  }
   function quiet(p, ms) { return within(p, ms, 'slow').catch(function () { return null; }); }
   function step(note) { st.note = note; st.log.push(Math.round((Date.now() - st.t0) / 100) / 10 + 's ' + note); paint(true); }
   function cleanHeaders(h) {
@@ -216,12 +236,12 @@
       index = files['index.htm'] ? 'index.htm' : (files['index.html'] ? 'index.html' : (location.pathname.split('/').pop() || 'index.htm'));
       step('Opening storage on this device');
       // an older stored copy keeps answering until the new one is whole
-      if (!(st.meta && st.meta.complete)) return within(writeMeta({ build: build, cache: cacheName, complete: false, index: index }), 20000, 'This browser did not open its storage');
+      if (!(st.meta && st.meta.complete)) return patient(writeMeta({ build: build, cache: cacheName, complete: false, index: index }), 'This browser did not open its storage. Clear this site\'s data in the browser settings, then try again');
     }).then(function () {
-      return within(caches.open(cacheName), 20000, 'This browser did not open its storage');
+      return patient(caches.open(cacheName), 'This browser did not open its storage. Clear this site\'s data in the browser settings, then try again');
     }).then(function (c) {
       cache = c;
-      return within(cache.keys(), 30000, 'This browser did not open its storage');
+      return patient(cache.keys(), 'This browser did not open its storage. Clear this site\'s data in the browser settings, then try again');
     }).then(function (keys) {
       keys.forEach(function (k) { have[k.url] = 1; });
       var p, key, need = 0;
@@ -362,6 +382,6 @@
     // leave 3DVista a moment to register the worker itself, then make sure it is there
     setTimeout(registerWorker, 2500);
   }
-  window.ALPOffline = { start: start, stop: stop, remove: remove, status: function () { return { state: st.state, percent: pct(), done: st.done, total: st.total, note: st.note, failed: st.failed, extras: st.extras, extrasMissing: st.extrasMissing, missing: st.missing, meta: st.meta, supported: supported, log: st.log.slice(-30), lastError: st.lastError }; } };
+  window.ALPOffline = { start: start, stop: stop, remove: remove, reset: resetAll, status: function () { return { state: st.state, percent: pct(), done: st.done, total: st.total, note: st.note, failed: st.failed, extras: st.extras, extrasMissing: st.extrasMissing, missing: st.missing, meta: st.meta, supported: supported, log: st.log.slice(-30), lastError: st.lastError }; } };
   if (document.readyState === 'complete') init(); else window.addEventListener('load', init);
 })();

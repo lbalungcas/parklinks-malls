@@ -758,6 +758,16 @@
       else { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas); tex.__alpW = canvas.width; tex.__alpH = canvas.height; }
       if (isGL2) { gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); }
     }
+    // a panel can show a video element straight from WebGL (option media: a function that returns the element when it has a
+    // frame). Headset browsers built on Firefox play video but can give back black frames when it is drawn into a 2D canvas;
+    // the WebGL upload is the path 3DVista uses for its own videos, so it works wherever those do
+    function uploadMedia(tex, el) {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      var w = el.videoWidth || el.width, h = el.videoHeight || el.height;
+      if (tex.__alpW === w && tex.__alpH === h && tex.__alpMedia) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
+      else { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el); tex.__alpW = w; tex.__alpH = h; tex.__alpMedia = true; }
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    }
     function mk(w, h, fn) { var c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d')); return c; }
     var cursorCanvas = mk(64, 64, function (ctx) {
       var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 30);
@@ -935,6 +945,15 @@
           for (var i = 0; i < list.length; i++) {
             var p = list[i];
             if (!texs[p.id]) { texs[p.id] = newTex(); p.uploaded = false; }
+            var me = null;
+            if (p.media && p.mediaOk !== false) { try { me = p.media(); } catch (merr) { me = null; } }
+            if (me) {
+              try { uploadMedia(texs[p.id], me); p.mediaOk = true; }
+              catch (err) { p.mediaOk = false; warn('video upload failed for', p.id, err); }
+              p.uploaded = false;
+              continue;
+            }
+            if (texs[p.id].__alpMedia) { texs[p.id].__alpMedia = false; texs[p.id].__alpW = 0; p.uploaded = false; }
             if (!p.uploaded && p.canvas) {
               try { upload(texs[p.id], p.canvas); } catch (err) { warn('texture upload failed for', p.id, err); }
               p.uploaded = true;
@@ -1215,6 +1234,8 @@
   E.addPass = function (fn) { passes.push(fn); };
   E.addPicker = function (fn) { pickers.push(fn); };
   E.addFrame = function (fn) { frames.push(fn); };
+  // panels can show a video element through WebGL (the media option); screens check this before relying on it
+  E.mediaPanels = true;
 
   /* ---------- several projects in one tour ---------- */
   // what one project sees of the engine: its own panels, its own saved positions, and hooks that only run while it is open

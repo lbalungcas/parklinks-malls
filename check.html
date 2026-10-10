@@ -24,6 +24,8 @@
 <p class="lead">Open this page in the headset browser, wait until nothing says "checking" or "waiting" (up to 90 seconds), then take a screenshot.</p>
 <table id="t"></table>
 <button id="again" type="button">Check again</button>
+<button id="reset" type="button" style="background:#7f1d1d;border-color:#ef4444;margin-left:12px">Reset offline copy</button>
+<p id="resetmsg" class="lead" style="margin-top:14px"></p>
 <script>
 (function () {
   'use strict';
@@ -122,6 +124,17 @@
     else kept(false, 'not available');
   }
   document.getElementById('again').onclick = run;
+  // removes the saved copy and the offline helper, for a device where the tour no longer opens properly
+  document.getElementById('reset').onclick = function () {
+    var msg = document.getElementById('resetmsg'), jobs = [];
+    msg.textContent = 'Resetting...';
+    try { jobs.push(caches.keys().then(function (n) { return Promise.all(n.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+    try { jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+    Promise.all(jobs.map(function (j) { return j.catch(function () {}); })).then(function () {
+      msg.textContent = 'Done. The saved copy and the offline helper are removed. Open the tour again: it loads fresh from the site.';
+      run();
+    });
+  };
   run();
 })();
 </script>

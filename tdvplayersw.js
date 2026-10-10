@@ -1,7 +1,11 @@
 /* Offline service worker for the tour.
    It keeps the file name 3DVista uses for its own service worker, so whichever script registers it, this is the file that runs.
-   Until a visitor presses "Download for offline" it only passes requests through. After the download it answers from the
-   stored copy first, so the tour opens with no connection. */
+   Until a visitor presses "Download for offline" it only passes requests through. After the download:
+   - the tour's own versioned files (?v=<publish>) of exactly the stored publish come from the stored copy first (fast, and
+     safe, because they are the same files);
+   - everything else, and every file of a newer publish, comes from the network first, and from the stored copy only when
+     the network fails; so a visitor who is online always gets the site as it is now, never a stale copy;
+   - the page itself waits for the network up to NAV_TIMEOUT, and opens from the stored copy only when there is no answer. */
 
 // 3DVista's own lines (push messages for its remote features). They must never stop this worker from installing.
 var messaging;
@@ -21,7 +25,7 @@ try {
 var SCOPE = self.registration.scope;
 var META_CACHE = 'alp-offline-meta';
 var META_KEY = SCOPE + '__alp-offline-meta__';
-var NAV_TIMEOUT = 3500;
+var NAV_TIMEOUT = 12000;
 var EXTERNAL = ['raw.githubusercontent.com', 'fonts.googleapis.com', 'fonts.gstatic.com', 'cdn.jsdelivr.net'];
 var meta = null;
 
@@ -31,12 +35,19 @@ self.addEventListener('message', function (event) {
     if (event.data && event.data.type === 'alp-offline-meta') { meta = null; event.waitUntil(loadMeta()); }
 });
 
+// Storage that does not answer (seen in Firefox-based headset browsers after an interrupted download) must never hold up
+// the tour: every look into the stored copy gives up after a few seconds and the request goes to the network instead.
+function within(p, ms, alt) {
+    return new Promise(function (ok) {
+        var t = setTimeout(function () { ok(alt); }, ms);
+        p.then(function (v) { clearTimeout(t); ok(v); }, function () { clearTimeout(t); ok(alt); });
+    });
+}
 function loadMeta() {
     if (meta) return Promise.resolve(meta);
-    return caches.open(META_CACHE).then(function (c) { return c.match(META_KEY); })
+    return within(caches.open(META_CACHE).then(function (c) { return c.match(META_KEY); })
         .then(function (r) { return r ? r.json() : {}; })
-        .then(function (m) { meta = m || {}; return meta; })
-        .catch(function () { return {}; });
+        .then(function (m) { meta = m || {}; return meta; }), 3000, {});
 }
 
 // the name a file is stored under. Tour files lose their version query; a GitHub page link becomes the raw file it leads to.
@@ -74,14 +85,14 @@ function ranged(req, res) {
 
 function stored(req, key, m) {
     if (!m.cache) return Promise.resolve(null);
-    return caches.open(m.cache).then(function (c) { return c.match(key); })
+    return within(caches.open(m.cache).then(function (c) { return c.match(key); }), 5000, null)
         .then(function (res) { return res ? ranged(req, res) : null; })
         .catch(function () { return null; });
 }
 
 function fallback(req, key, m, error) {
     return stored(req, key, m).then(function (res) {
-        return res || caches.match(req, { ignoreSearch: true, ignoreMethod: true });
+        return res || within(caches.match(req, { ignoreSearch: true, ignoreMethod: true }), 5000, null);
     }).then(function (res) {
         if (res) return res;
         if (error) throw error;
@@ -110,7 +121,7 @@ function network(req, u, key, m) {
 function navigate(req, key, m) {
     if (/\/$/.test(key)) key += m.index || 'index.htm';
     if (!m.complete) return fetch(req).catch(function (error) { return fallback(req, key, m, error); });
-    // with a stored copy, a page that does not answer quickly opens from the copy instead
+    // with a stored copy, a page that does not answer at all opens from the copy instead; a slow answer is still waited for
     return new Promise(function (resolve, reject) {
         var settled = false;
         var timer = setTimeout(function () {
@@ -142,8 +153,8 @@ self.addEventListener('fetch', function (event) {
         if (req.mode === 'navigate') return navigate(req, key, m);
         var bypass = req.cache === 'reload' || req.cache === 'no-store';
         var v = u.origin === self.location.origin ? u.searchParams.get('v') : null;
-        // the stored copy answers first when it belongs to the version of the tour that is asking
-        if (m.complete && !bypass && (!v || v === m.build)) {
+        // the stored copy answers first only for versioned files of exactly the stored publish
+        if (m.complete && !bypass && v && v === m.build) {
             return stored(req, key, m).then(function (res) { return res || network(req, u, key, m); });
         }
         return network(req, u, key, m);

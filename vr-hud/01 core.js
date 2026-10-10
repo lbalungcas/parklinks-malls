@@ -249,6 +249,9 @@
   ALP.drawIcon = iconDrawer(ALP.icons);
 
   var images = {};
+  // a second address for a picture: when the first cannot be loaded (a 3DVista preview has no alp-assets folder, for example),
+  // the same entry quietly loads this one instead. Projects fill it in: ALP.imgFallback['alp-assets/x.jpg'] = 'https://...'
+  ALP.imgFallback = ALP.imgFallback || {};
   ALP.img = function (url) {
     url = U.rawUrl(url);
     if (!url) return null;
@@ -262,10 +265,18 @@
         var t = document.createElement('canvas'); t.width = t.height = 2;
         var c = t.getContext('2d'); c.drawImage(e.el, 0, 0, 2, 2); c.getImageData(0, 0, 1, 1);
         e.state = 'ok';
-      } catch (err) { e.state = 'error'; ALP.warn('image blocked by CORS (not usable in VR):', url); }
+      } catch (err) {
+        var fb = ALP.imgFallback[url];
+        if (fb && !e.fellBack) { e.fellBack = true; e.el.src = U.rawUrl(fb); return; }
+        e.state = 'error'; ALP.warn('image blocked by CORS (not usable in VR):', url);
+      }
       ALP.bus.emit('images');
     };
-    e.el.onerror = function () { e.state = 'error'; ALP.bus.emit('images'); };
+    e.el.onerror = function () {
+      var fb = ALP.imgFallback[url];
+      if (fb && !e.fellBack) { e.fellBack = true; e.el.src = U.rawUrl(fb); return; }
+      e.state = 'error'; ALP.bus.emit('images');
+    };
     e.el.src = url;
     return e;
   };
