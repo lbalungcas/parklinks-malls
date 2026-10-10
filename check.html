@@ -21,7 +21,7 @@
 </head>
 <body>
 <h1>Offline check</h1>
-<p class="lead">Open this page in the headset browser, wait until nothing says "checking", then take a screenshot.</p>
+<p class="lead">Open this page in the headset browser, wait until nothing says "checking" or "waiting" (up to 90 seconds), then take a screenshot.</p>
 <table id="t"></table>
 <button id="again" type="button">Check again</button>
 <script>
@@ -34,11 +34,17 @@
     tr.appendChild(a); tr.appendChild(b); T.appendChild(tr);
     return function (ok, text) { b.textContent = text; b.className = ok === true ? 'ok' : ok === false ? 'bad' : 'wait'; };
   }
+  var LONG = 90000;
   function within(p, ms) {
     return new Promise(function (ok, no) {
       var t = setTimeout(function () { no(new Error('NO ANSWER after ' + ms / 1000 + ' s')); }, ms);
       p.then(function (v) { clearTimeout(t); ok(v); }, function (e) { clearTimeout(t); no(e); });
     });
+  }
+  // a row that counts the seconds while it waits
+  function counting(set) {
+    var t0 = Date.now(), iv = setInterval(function () { set(null, 'waiting... ' + Math.round((Date.now() - t0) / 1000) + ' s'); }, 1000);
+    return function (ok, text) { clearInterval(iv); set(ok, text + (Date.now() - t0 > 3000 ? '  (took ' + Math.round((Date.now() - t0) / 1000) + ' s)' : '')); };
   }
   function msg(e) { return (e && (e.name ? e.name + ': ' : '') + (e.message || e)) || 'failed'; }
   function mb(n) { return (n / 1048576).toFixed(0) + ' MB'; }
@@ -60,10 +66,10 @@
     }, function (e) { est(false, msg(e)); });
     else est(false, 'not available');
 
-    var cache = row('Cache storage: write, read');
+    var cache = counting(row('Cache storage: write, read'));
     if ('caches' in window) {
       var name = 'alp-check', key = new URL('__alp-check__', location.href).href;
-      within(caches.open(name), 8000).then(function (c) {
+      within(caches.open(name), LONG).then(function (c) {
         return within(c.put(key, new Response('hello', { headers: { 'Content-Type': 'text/plain' } })), 8000).then(function () { return within(c.match(key), 8000); });
       }).then(function (r) { return r ? r.text() : ''; }).then(function (t) {
         cache(t === 'hello', t === 'hello' ? 'works' : 'wrote but could not read back');
@@ -71,10 +77,10 @@
       }, function (e) { cache(false, msg(e)); });
     } else cache(false, 'not available');
 
-    var big = row('Cache storage: 20 MB file');
+    var big = counting(row('Cache storage: 20 MB file'));
     if ('caches' in window) {
       var bkey = new URL('__alp-check-big__', location.href).href;
-      within(caches.open('alp-check-big'), 8000).then(function (c) {
+      within(caches.open('alp-check-big'), LONG).then(function (c) {
         return within(c.put(bkey, new Response(new Blob([new Uint8Array(20 * 1048576)]))), 20000).then(function () { return within(c.match(bkey), 8000); });
       }).then(function (r) { return r ? r.blob() : null; }).then(function (b) {
         big(!!b && b.size === 20 * 1048576, b ? 'works (' + mb(b.size) + ')' : 'could not read back');
@@ -108,8 +114,8 @@
       }, function (e) { sw(false, msg(e)); });
     } else sw(false, 'not available');
 
-    var kept = row('Offline copy on this device');
-    if ('caches' in window) within(caches.keys(), 8000).then(function (names) {
+    var kept = counting(row('Offline copy on this device'));
+    if ('caches' in window) within(caches.keys(), LONG).then(function (names) {
       var copies = names.filter(function (n) { return n.indexOf('alp-offline-') === 0 && n !== 'alp-offline-meta'; });
       kept(copies.length ? true : null, copies.length ? copies.join(', ') : 'none yet');
     }, function (e) { kept(false, msg(e)); });
